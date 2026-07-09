@@ -385,7 +385,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge variant="secondary">
           {formatNumber(result.n_segments)} segments
         </Badge>
@@ -395,6 +395,11 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
         <Badge variant="secondary">
           {visible.edges.length}/{result.edges.length} edges
         </Badge>
+        <div className="ml-auto">
+          <Button variant="outline" size="sm" onClick={exportSvg}>
+            <Download /> SVG
+          </Button>
+        </div>
       </div>
 
       {/* Controls */}
@@ -472,14 +477,6 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                 aria-label="Re-run layout"
               >
                 <RotateCw />
-              </Button>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={exportSvg}
-                aria-label="Export SVG"
-              >
-                <Download />
               </Button>
             </div>
           </div>
