@@ -521,10 +521,10 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                     y1={e.y1}
                     x2={e.x2}
                     y2={e.y2}
-                    stroke={inHood ? "#6366f1" : "#94a3b8"}
+                    stroke={inHood ? "#6366f1" : "#475569"}
                     strokeWidth={e.width}
                     strokeOpacity={
-                      neighborhood ? (inHood ? 0.9 : 0.06) : 0.35
+                      neighborhood ? (inHood ? 0.95 : 0.08) : 0.65
                     }
                     strokeLinecap="round"
                   />
