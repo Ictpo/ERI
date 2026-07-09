@@ -1,10 +1,10 @@
-# Iramuteq Web
+# ERI: Engine for Reinert Insights
 
 A modern, multi-user web reimplementation of [Iramuteq](http://www.iramuteq.org/) —
 multidimensional text and questionnaire analysis — with the legacy wxPython/R desktop
 stack replaced by a FastAPI statistical engine and an interactive Next.js interface.
 
-| Legacy Iramuteq pain point | Iramuteq Web |
+| Legacy Iramuteq pain point | ERI |
 | --- | --- |
 | Fragile local Python 2 + R install | `docker compose up` — zero local setup |
 | Single-user desktop GUI | Server-side projects, any number of browsers |
@@ -30,18 +30,32 @@ stack replaced by a FastAPI statistical engine and an interactive Next.js interf
 
 ## Quick start
 
-```bash
-docker compose up --build
-# frontend: http://localhost:3000   backend API docs: http://localhost:8000/docs
+Three ways to run ERI, most convenient first:
+
+**Windows exe (no installs at all)** — build once, share freely:
+
+```powershell
+cd frontend; npm install; npm run build          # static export -> frontend/out
+cd ..\backend; powershell -ExecutionPolicy Bypass -File build_exe.ps1
+.\dist\ERI.exe                                    # opens the browser by itself
 ```
 
-Dev without Docker:
+**Docker (single container)**:
+
+```bash
+docker compose up --build     # UI + API on http://localhost:8000
+```
+
+**Dev mode (two processes, hot reload)**:
 
 ```bash
 cd backend && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
 .venv/Scripts/uvicorn app.main:app --reload --port 8000
-cd frontend && npm install && npm run dev
+cd frontend && npm install && npm run dev        # http://localhost:3000
 ```
+
+The backend serves the exported UI from `/` whenever `frontend/out` exists
+(or `ERI_UI_DIR` points somewhere), so one process is enough outside dev.
 
 ## Tests
 
@@ -53,6 +67,8 @@ cd frontend && npm run build
 ## Repository layout
 
 - `CONTRACT.md` — the API contract both halves are built against
-- `backend/` — FastAPI + NumPy/SciPy/pandas/NetworkX engine (no R)
-- `frontend/` — Next.js 14 workspace UI with D3 + Cytoscape visualizations
+- `backend/` — FastAPI + NumPy/SciPy/pandas/NetworkX engine (no R);
+  `desktop.py` + `build_exe.ps1` produce the standalone `ERI.exe`
+- `frontend/` — Next.js 14 workspace UI (static export) with D3 visualizations
+- `Dockerfile` / `docker-compose.yml` — single-container build
 - `CLAUDE.md` — architecture map, run scripts and conventions for future work

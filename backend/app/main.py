@@ -1,11 +1,15 @@
-"""Iramuteq Web API — FastAPI application and routes."""
+"""ERI (Engine for Reinert Insights) API — FastAPI application and routes."""
 from __future__ import annotations
 
+import os
+import sys
 from collections import Counter
+from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import storage
@@ -30,7 +34,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="Iramuteq Web API", version=VERSION, lifespan=_lifespan)
+app = FastAPI(title="ERI: Engine for Reinert Insights — API", version=VERSION, lifespan=_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -237,3 +241,25 @@ async def analysis_events(aid: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------- static UI (single monolithic server) ----------
+# The Next.js static export is served from / when present, so Docker and the
+# desktop exe need only this one process. API routes above take precedence.
+
+def _ui_dir() -> Path | None:
+    candidates = []
+    if os.environ.get("ERI_UI_DIR"):
+        candidates.append(Path(os.environ["ERI_UI_DIR"]))
+    if hasattr(sys, "_MEIPASS"):  # PyInstaller bundle
+        candidates.append(Path(sys._MEIPASS) / "ui")  # type: ignore[attr-defined]
+    candidates.append(Path(__file__).resolve().parents[2] / "frontend" / "out")
+    for c in candidates:
+        if (c / "index.html").is_file():
+            return c
+    return None
+
+
+_ui = _ui_dir()
+if _ui is not None:
+    app.mount("/", StaticFiles(directory=str(_ui), html=True), name="ui")

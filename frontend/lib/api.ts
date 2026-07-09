@@ -11,8 +11,18 @@ import type {
   ProjectDetail,
 } from "./types";
 
-export const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/**
+ * Backend base URL. In dev the UI runs on :3000 with the API on :8000; when
+ * the static export is served by the backend itself (Docker / desktop exe),
+ * the API lives on the same origin as the page.
+ */
+export function getApiBase(): string {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== "undefined" && window.location.port !== "3000") {
+    return window.location.origin;
+  }
+  return "http://localhost:8000";
+}
 
 /** Error thrown for every failed API call; carries the contract error envelope. */
 export class ApiError extends Error {
@@ -35,7 +45,7 @@ export function toErrorInfo(err: unknown): { message: string; hint: string | nul
   if (err instanceof TypeError)
     return {
       message: "Could not reach the analysis server.",
-      hint: `Check that the backend is running at ${API_BASE}.`,
+      hint: `Check that the backend is running at ${getApiBase()}.`,
     };
   if (err instanceof Error) return { message: err.message, hint: null };
   return { message: "Unexpected error.", hint: null };
@@ -63,7 +73,7 @@ async function parseError(res: Response): Promise<never> {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}/api${path}`, {
+  const res = await fetch(`${getApiBase()}/api${path}`, {
     ...init,
     headers:
       init?.body instanceof FormData
@@ -129,5 +139,5 @@ export const api = {
 
   /** URL for the SSE progress stream of an analysis. */
   analysisEventsUrl: (analysisId: string) =>
-    `${API_BASE}/api/analyses/${analysisId}/events`,
+    `${getApiBase()}/api/analyses/${analysisId}/events`,
 };

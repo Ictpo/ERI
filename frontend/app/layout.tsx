@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Iramuteq Web",
+  title: "ERI: Engine for Reinert Insights",
   description:
     "Statistical text analysis in the browser: word statistics, Reinert classification, similarity networks and correspondence analysis.",
 };

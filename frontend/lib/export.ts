@@ -38,6 +38,17 @@ function inlineStyles(source: Element, target: Element) {
 export function downloadSvg(svgEl: SVGSVGElement, filename: string) {
   const clone = svgEl.cloneNode(true) as SVGSVGElement;
   inlineStyles(svgEl, clone);
+  // Strip interactive UI artifacts so exports are print-ready:
+  // selection rings/overlays are tagged data-export-ignore in the views,
+  // and selection underlines / cursor classes never belong in the file.
+  clone
+    .querySelectorAll("[data-export-ignore]")
+    .forEach((el) => el.remove());
+  clone.querySelectorAll("text").forEach((t) => {
+    t.removeAttribute("text-decoration");
+    if (t.style.textDecoration) t.style.textDecoration = "";
+  });
+  clone.querySelectorAll("[class]").forEach((el) => el.removeAttribute("class"));
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
   if (!clone.getAttribute("width") && svgEl.clientWidth) {

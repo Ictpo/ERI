@@ -1,6 +1,7 @@
-# Iramuteq Web
+# ERI: Engine for Reinert Insights
 
-Modern multi-user web reimplementation of Iramuteq (multidimensional text analysis).
+Modern multi-user web reimplementation of Iramuteq (multidimensional text analysis),
+branded "ERI: Engine for Reinert Insights".
 Monorepo: `backend/` (FastAPI + NumPy/SciPy/pandas/NetworkX math engine, no R dependency)
 and `frontend/` (Next.js 14 App Router + TypeScript + Tailwind + D3/Cytoscape).
 
@@ -20,7 +21,18 @@ cd backend; .\.venv\Scripts\Activate.ps1; uvicorn app.main:app --reload --port 8
 cd frontend; npm run dev
 ```
 
-Or containerized: `docker compose up --build` (frontend 3000, backend 8000, SQLite volume `iramuteq-data`).
+Other modes (both serve UI + API from ONE process on :8000):
+- Docker: `docker compose up --build` (root Dockerfile: node stage exports UI,
+  python stage serves it; volume `eri-data`).
+- Desktop exe: `cd frontend; npm run build` then
+  `cd backend; powershell -File build_exe.ps1` → `backend/dist/ERI.exe`
+  (PyInstaller onefile; picks a free port, opens browser, DB in %LOCALAPPDATA%\ERI).
+
+The frontend is a STATIC EXPORT (`output: "export"`, trailingSlash) — the
+workspace route is `/project/?id=...` (query param, NOT a dynamic segment).
+`lib/api.ts:getApiBase()` targets localhost:8000 only when the page runs on
+port 3000 (dev); otherwise it uses the page origin. main.py mounts
+`frontend/out` (or `ERI_UI_DIR`, or the PyInstaller `_MEIPASS/ui` bundle) at `/`.
 
 ## Verify
 
@@ -48,10 +60,15 @@ corpus). `tests/test_api.py` drives the full async pipeline including SSE.
   `GET /api/analyses/{id}/events`. `storage.py` — SQLite (WAL), env `IRAMUTEQ_DB`.
 - `backend/app/errors.py` — every error becomes `{error:{code,message,hint}}`; keep it
   that way (the frontend toasts message+hint verbatim).
-- `frontend/` — see `frontend/README.md`. Workspace at `/project/[id]`: left sidebar
+- `frontend/` — see `frontend/README.md`. Workspace at `/project/?id=...`: left sidebar
   (analyses history), center (corpus builder / analysis config), right (result tabs:
   dendrogram, network, factor map, stats+cloud). Viz components are client-only
   (`dynamic(..., {ssr:false})`).
+- Visuals follow academic Iramuteq conventions: similarity = D3 SVG force layout with
+  text nodes, max-spanning-tree default, convex-hull community areas
+  (similarity-view.tsx); CHD = vertical top-down dendrogram, classes on a shared
+  baseline with word/freq/chi2 tables inside the SVG (chd-view.tsx). SVG exports strip
+  `[data-export-ignore]` elements and selection artifacts (lib/export.ts).
 
 ## Conventions / gotchas
 

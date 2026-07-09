@@ -1,12 +1,11 @@
 "use client";
 
 import * as React from "react";
-import cytoscape, { type Core, type NodeSingular } from "cytoscape";
-import coseBilkent from "cytoscape-cose-bilkent";
-import { Download, RotateCw, X } from "lucide-react";
+import * as d3 from "d3";
+import { Download, Maximize2, RotateCw, X } from "lucide-react";
 import type { SimilarityEdge, SimilarityResult } from "@/lib/types";
 import { categoryColor } from "@/lib/palette";
-import { downloadDataUrl } from "@/lib/export";
+import { downloadSvg } from "@/lib/export";
 import { formatNumber } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,23 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-let registered = false;
-function ensureLayout() {
-  if (!registered) {
-    cytoscape.use(coseBilkent);
-    registered = true;
-  }
-}
-
 type Metric = "cooc" | "jaccard" | "cosine";
-
-// cose-bilkent-specific options are not covered by the core cytoscape types.
-const LAYOUT_OPTIONS = {
-  name: "cose-bilkent",
-  animate: false,
-  idealEdgeLength: 90,
-  nodeRepulsion: 6500,
-} as unknown as cytoscape.LayoutOptions;
 
 const METRIC_LABEL: Record<Metric, string> = {
   cooc: "Co-occurrence",
@@ -46,14 +29,176 @@ const METRIC_LABEL: Record<Metric, string> = {
   cosine: "Cosine",
 };
 
+const VIEW_W = 760;
+const VIEW_H = 560;
+
+type LaidNode = {
+  id: string;
+  freq: number;
+  community: number;
+  x: number;
+  y: number;
+  fontSize: number;
+  halfWidth: number;
+};
+
+type LaidEdge = {
+  source: string;
+  target: string;
+  weight: number;
+  width: number;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+};
+
+type Hull = { community: number; path: string };
+
+/** Maximum spanning tree (Kruskal over descending weights) — the classic
+    Iramuteq "arbre maximum" rendering of a similarity graph. */
+function maxSpanningTree<E extends { source: string; target: string }>(
+  nodeIds: string[],
+  edges: E[],
+  weight: (e: E) => number
+): E[] {
+  const parent = new Map<string, string>(nodeIds.map((id) => [id, id]));
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(x, r);
+    return r;
+  };
+  const kept: E[] = [];
+  const sorted = [...edges].sort((a, b) => weight(b) - weight(a));
+  for (const e of sorted) {
+    const rs = find(e.source);
+    const rt = find(e.target);
+    if (rs !== rt) {
+      parent.set(rs, rt);
+      kept.push(e);
+      if (kept.length === nodeIds.length - 1) break;
+    }
+  }
+  return kept;
+}
+
+/** Pad a set of points and return a smooth closed contour around them. */
+function communityContour(points: [number, number][], pad: number): string {
+  const expanded: [number, number][] = [];
+  const STEPS = 8;
+  for (const [x, y] of points) {
+    for (let i = 0; i < STEPS; i++) {
+      const a = (i / STEPS) * 2 * Math.PI;
+      expanded.push([x + pad * Math.cos(a), y + pad * Math.sin(a)]);
+    }
+  }
+  const hull = d3.polygonHull(expanded);
+  if (!hull) return "";
+  const line = d3
+    .line<[number, number]>()
+    .curve(d3.curveCatmullRomClosed.alpha(0.8));
+  return line(hull) ?? "";
+}
+
+/** Run the force simulation synchronously; returns positioned nodes. */
+function computeLayout(
+  nodes: { id: string; freq: number; community: number }[],
+  edges: { source: string; target: string; weight: number }[],
+  maxFreq: number,
+  maxWeight: number,
+  seed: number
+): LaidNode[] {
+  const rng = d3.randomLcg(seed || 0.42);
+  const simNodes = nodes.map((n, i) => {
+    const fontSize = 11 + 22 * Math.sqrt(n.freq / maxFreq);
+    return {
+      ...n,
+      index: i,
+      fontSize,
+      halfWidth: Math.max(fontSize * 0.75, n.id.length * fontSize * 0.29),
+      // Deterministic ring initialization (jittered by the seeded RNG).
+      x: VIEW_W / 2 + 160 * Math.cos((i / nodes.length) * 2 * Math.PI) + 40 * (rng() - 0.5),
+      y: VIEW_H / 2 + 160 * Math.sin((i / nodes.length) * 2 * Math.PI) + 40 * (rng() - 0.5),
+    };
+  });
+  const byId = new Map(simNodes.map((n) => [n.id, n]));
+  const simEdges = edges
+    .filter((e) => byId.has(e.source) && byId.has(e.target))
+    .map((e) => ({ ...e }));
+
+  // Spatially separate communities: each gets an anchor on a circle and its
+  // members are gently pulled toward it, so contours don't pile up centrally.
+  const communities = Array.from(new Set(nodes.map((n) => n.community))).sort(
+    (a, b) => a - b
+  );
+  const anchor = new Map<number, { x: number; y: number }>();
+  communities.forEach((c, i) => {
+    const a = (i / Math.max(1, communities.length)) * 2 * Math.PI - Math.PI / 2;
+    const r = communities.length > 1 ? 170 : 0;
+    anchor.set(c, {
+      x: VIEW_W / 2 + r * Math.cos(a),
+      y: VIEW_H / 2 + r * Math.sin(a),
+    });
+  });
+
+  const sim = d3
+    .forceSimulation(simNodes as d3.SimulationNodeDatum[])
+    .force(
+      "link",
+      d3
+        .forceLink(simEdges as d3.SimulationLinkDatum<d3.SimulationNodeDatum>[])
+        .id((d) => (d as unknown as LaidNode).id)
+        .distance(
+          (l) => 60 + 90 * (1 - (l as unknown as { weight: number }).weight / (maxWeight || 1))
+        )
+        .strength(
+          (l) => 0.2 + 0.6 * ((l as unknown as { weight: number }).weight / (maxWeight || 1))
+        )
+    )
+    .force("charge", d3.forceManyBody().strength(-180))
+    .force(
+      "collide",
+      d3
+        .forceCollide<d3.SimulationNodeDatum>()
+        .radius((d) => (d as unknown as LaidNode).halfWidth + 6)
+        .iterations(2)
+    )
+    .force(
+      "x",
+      d3
+        .forceX<d3.SimulationNodeDatum>((d) => {
+          const c = (d as unknown as LaidNode).community;
+          return anchor.get(c)?.x ?? VIEW_W / 2;
+        })
+        .strength(0.09)
+    )
+    .force(
+      "y",
+      d3
+        .forceY<d3.SimulationNodeDatum>((d) => {
+          const c = (d as unknown as LaidNode).community;
+          return anchor.get(c)?.y ?? VIEW_H / 2;
+        })
+        .strength(0.11)
+    )
+    .stop();
+
+  for (let i = 0; i < 300; i++) sim.tick();
+  return simNodes as unknown as LaidNode[];
+}
+
 export function SimilarityView({ result }: { result: SimilarityResult }) {
-  const containerRef = React.useRef<HTMLDivElement>(null);
-  const cyRef = React.useRef<Core | null>(null);
+  const svgRef = React.useRef<SVGSVGElement>(null);
+  const zoomGroupRef = React.useRef<SVGGElement>(null);
   const [metric, setMetric] = React.useState<Metric>("cooc");
   const [minFreq, setMinFreq] = React.useState(0);
   const [minWeight, setMinWeight] = React.useState(0);
-  const [colorByCommunity, setColorByCommunity] = React.useState(true);
+  const [showCommunities, setShowCommunities] = React.useState(true);
+  const [treeOnly, setTreeOnly] = React.useState(true);
   const [selectedNode, setSelectedNode] = React.useState<string | null>(null);
+  const [hoveredNode, setHoveredNode] = React.useState<string | null>(null);
+  const [layoutSeed, setLayoutSeed] = React.useState(1);
 
   const freqDomain = React.useMemo(() => {
     const freqs = result.nodes.map((n) => n.freq);
@@ -68,7 +213,6 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
       : { min: 0, max: Math.max(0.01, Number(max.toFixed(2))), step: 0.01 };
   }, [result.edges, metric]);
 
-  // Clamp weight threshold when the metric changes.
   React.useEffect(() => {
     setMinWeight(0);
   }, [metric]);
@@ -76,12 +220,19 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
   const visible = React.useMemo(() => {
     const keptNodes = result.nodes.filter((n) => n.freq >= minFreq);
     const nodeIds = new Set(keptNodes.map((n) => n.id));
-    const keptEdges = result.edges.filter(
+    let keptEdges = result.edges.filter(
       (e) =>
         e[metric] >= minWeight && nodeIds.has(e.source) && nodeIds.has(e.target)
     );
+    if (treeOnly) {
+      keptEdges = maxSpanningTree(
+        keptNodes.map((n) => n.id),
+        keptEdges,
+        (e) => e[metric]
+      );
+    }
     return { nodes: keptNodes, edges: keptEdges };
-  }, [result, metric, minFreq, minWeight]);
+  }, [result, metric, minFreq, minWeight, treeOnly]);
 
   const maxFreq = React.useMemo(
     () => Math.max(1, ...result.nodes.map((n) => n.freq)),
@@ -92,119 +243,127 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
     return weights.length ? Math.max(...weights) : 1;
   }, [result.edges, metric]);
 
-  const runLayout = React.useCallback(() => {
-    const cy = cyRef.current;
-    if (!cy || cy.nodes().length === 0) return;
-    cy.layout(LAYOUT_OPTIONS).run();
-    cy.fit(undefined, 30);
-  }, []);
-
-  // Build / rebuild graph when visible elements change.
-  React.useEffect(() => {
-    if (!containerRef.current) return;
-    ensureLayout();
-
-    const nodeDiameter = (freq: number) =>
-      10 + 34 * Math.sqrt(freq / maxFreq);
-    const edgeWidth = (w: number) =>
-      0.75 + 5 * (maxWeight > 0 ? w / maxWeight : 0);
-
-    const cy = cytoscape({
-      container: containerRef.current,
-      elements: [
-        ...visible.nodes.map((n) => ({
-          data: {
-            id: n.id,
-            label: n.id,
-            freq: n.freq,
-            community: n.community,
-            diameter: nodeDiameter(n.freq),
-          },
+  // Synchronous force layout (recomputed on filter/metric/seed changes).
+  const laidNodes = React.useMemo(
+    () =>
+      computeLayout(
+        visible.nodes,
+        visible.edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          weight: e[metric],
         })),
-        ...visible.edges.map((e, i) => ({
-          data: {
-            id: `e${i}`,
+        maxFreq,
+        maxWeight,
+        layoutSeed
+      ),
+    [visible, metric, maxFreq, maxWeight, layoutSeed]
+  );
+
+  const nodeById = React.useMemo(
+    () => new Map(laidNodes.map((n) => [n.id, n])),
+    [laidNodes]
+  );
+
+  const laidEdges: LaidEdge[] = React.useMemo(
+    () =>
+      visible.edges.flatMap((e) => {
+        const s = nodeById.get(e.source);
+        const t = nodeById.get(e.target);
+        if (!s || !t) return [];
+        return [
+          {
             source: e.source,
             target: e.target,
             weight: e[metric],
-            width: edgeWidth(e[metric]),
+            width: 0.6 + 4.5 * (maxWeight > 0 ? e[metric] / maxWeight : 0),
+            x1: s.x,
+            y1: s.y,
+            x2: t.x,
+            y2: t.y,
           },
-        })),
-      ],
-      style: [
-        {
-          selector: "node",
-          style: {
-            width: "data(diameter)",
-            height: "data(diameter)",
-            label: "data(label)",
-            "font-size": 10,
-            "font-family": "Inter, system-ui, sans-serif",
-            color: "#334155",
-            "text-valign": "bottom",
-            "text-margin-y": 4,
-            "background-color": colorByCommunity
-              ? (ele: NodeSingular) =>
-                  categoryColor(Number(ele.data("community")))
-              : "#4f46e5",
-            "border-width": 1.5,
-            "border-color": "#ffffff",
-          },
-        },
-        {
-          selector: "edge",
-          style: {
-            width: "data(width)",
-            "line-color": "#cbd5e1",
-            "curve-style": "haystack",
-            opacity: 0.8,
-          },
-        },
-        {
-          selector: ".dimmed",
-          style: { opacity: 0.12, "text-opacity": 0.1 },
-        },
-        {
-          selector: ".highlighted",
-          style: { "line-color": "#818cf8", opacity: 1 },
-        },
-      ],
-      wheelSensitivity: 0.3,
-    });
+        ];
+      }),
+    [visible.edges, nodeById, metric, maxWeight]
+  );
 
-    cy.on("mouseover", "node", (evt) => {
-      const node = evt.target as NodeSingular;
-      const hood = node.closedNeighborhood();
-      cy.elements().not(hood).addClass("dimmed");
-      hood.edges().addClass("highlighted");
+  // Translucent contour per community, drawn beneath edges and labels.
+  const hulls: Hull[] = React.useMemo(() => {
+    if (!showCommunities) return [];
+    const groups = d3.group(laidNodes, (n) => n.community);
+    const out: Hull[] = [];
+    groups.forEach((members, community) => {
+      if (community < 0) return;
+      const pts = members.map((m) => [m.x, m.y] as [number, number]);
+      const pad = 14 + Math.max(...members.map((m) => m.halfWidth)) * 0.6;
+      const path = communityContour(pts, pad);
+      if (path) out.push({ community, path });
     });
-    cy.on("mouseout", "node", () => {
-      cy.elements().removeClass("dimmed").removeClass("highlighted");
-    });
-    cy.on("tap", "node", (evt) => {
-      setSelectedNode((evt.target as NodeSingular).id());
-    });
-    cy.on("tap", (evt) => {
-      if (evt.target === cy) setSelectedNode(null);
-    });
+    return out.sort((a, b) => a.community - b.community);
+  }, [laidNodes, showCommunities]);
 
-    cyRef.current = cy;
-    if (cy.nodes().length > 0) {
-      cy.layout(LAYOUT_OPTIONS).run();
-      cy.fit(undefined, 30);
-    }
+  // Fit the drawing into the viewBox with padding.
+  const viewBox = React.useMemo(() => {
+    if (laidNodes.length === 0) return `0 0 ${VIEW_W} ${VIEW_H}`;
+    const xs = laidNodes.map((n) => n.x);
+    const ys = laidNodes.map((n) => n.y);
+    const padX = 70;
+    const padY = 46;
+    const minX = Math.min(...xs) - padX;
+    const maxX = Math.max(...xs) + padX;
+    const minY = Math.min(...ys) - padY;
+    const maxY = Math.max(...ys) + padY;
+    return `${minX} ${minY} ${maxX - minX} ${maxY - minY}`;
+  }, [laidNodes]);
 
+  // Pan / zoom.
+  React.useEffect(() => {
+    const svg = svgRef.current;
+    const group = zoomGroupRef.current;
+    if (!svg || !group) return;
+    const sel = d3.select(svg);
+    const zoom = d3
+      .zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.4, 8])
+      .on("zoom", (event) => {
+        group.setAttribute("transform", event.transform.toString());
+      });
+    sel.call(zoom);
+    sel.on("dblclick.zoom", null);
     return () => {
-      cy.destroy();
-      cyRef.current = null;
+      sel.on(".zoom", null);
     };
-  }, [visible, colorByCommunity, metric, maxFreq, maxWeight]);
+  }, []);
 
-  function exportPng() {
-    const cy = cyRef.current;
-    if (!cy) return;
-    const png = cy.png({ full: true, scale: 2, bg: "#ffffff" });
-    downloadDataUrl(png, "similarity-network.png");
+  const resetView = React.useCallback(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    d3.select(svg)
+      .transition()
+      .duration(250)
+      .call(
+        d3.zoom<SVGSVGElement, unknown>().transform as never,
+        d3.zoomIdentity
+      );
+    zoomGroupRef.current?.setAttribute("transform", "");
+  }, []);
+
+  const neighborhood = React.useMemo(() => {
+    if (!hoveredNode) return null;
+    const set = new Set<string>([hoveredNode]);
+    for (const e of laidEdges) {
+      if (e.source === hoveredNode) set.add(e.target);
+      if (e.target === hoveredNode) set.add(e.source);
+    }
+    return set;
+  }, [hoveredNode, laidEdges]);
+
+  function exportSvg() {
+    setHoveredNode(null);
+    // Let React re-render without hover artifacts before serializing.
+    requestAnimationFrame(() => {
+      if (svgRef.current) downloadSvg(svgRef.current, "similarity-network");
+    });
   }
 
   const selectedEdges: (SimilarityEdge & { other: string })[] =
@@ -284,18 +443,32 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
             />
           </div>
           <div className="flex items-end justify-between gap-2 pb-1">
-            <label className="flex items-center gap-2 text-sm text-slate-700">
-              <Switch
-                checked={colorByCommunity}
-                onCheckedChange={setColorByCommunity}
-              />
-              Community colors
-            </label>
+            <div className="grid gap-1.5">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <Switch checked={treeOnly} onCheckedChange={setTreeOnly} />
+                Max spanning tree
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <Switch
+                  checked={showCommunities}
+                  onCheckedChange={setShowCommunities}
+                />
+                Community areas
+              </label>
+            </div>
             <div className="flex gap-1">
               <Button
                 variant="outline"
                 size="icon"
-                onClick={runLayout}
+                onClick={resetView}
+                aria-label="Reset view"
+              >
+                <Maximize2 />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setLayoutSeed((s) => s + 1)}
                 aria-label="Re-run layout"
               >
                 <RotateCw />
@@ -303,8 +476,8 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               <Button
                 variant="outline"
                 size="icon"
-                onClick={exportPng}
-                aria-label="Export PNG"
+                onClick={exportSvg}
+                aria-label="Export SVG"
               >
                 <Download />
               </Button>
@@ -313,15 +486,91 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
         </CardContent>
       </Card>
 
-      {/* Canvas + side card */}
+      {/* Graph + side card */}
       <div className="relative">
         <Card>
-          <div
-            ref={containerRef}
-            className="h-[460px] w-full rounded-lg"
+          <svg
+            ref={svgRef}
+            viewBox={viewBox}
+            className="h-[520px] w-full cursor-grab rounded-lg active:cursor-grabbing"
             role="img"
             aria-label="Similarity network graph"
-          />
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setSelectedNode(null);
+            }}
+          >
+            <g ref={zoomGroupRef}>
+              {/* Community contours */}
+              {hulls.map((h) => (
+                <path
+                  key={h.community}
+                  d={h.path}
+                  fill={categoryColor(h.community)}
+                  fillOpacity={0.16}
+                  stroke={categoryColor(h.community)}
+                  strokeOpacity={0.35}
+                  strokeWidth={1.5}
+                />
+              ))}
+              {/* Edges */}
+              {laidEdges.map((e, i) => {
+                const inHood =
+                  neighborhood &&
+                  (e.source === hoveredNode || e.target === hoveredNode);
+                return (
+                  <line
+                    key={i}
+                    x1={e.x1}
+                    y1={e.y1}
+                    x2={e.x2}
+                    y2={e.y2}
+                    stroke={inHood ? "#6366f1" : "#94a3b8"}
+                    strokeWidth={e.width}
+                    strokeOpacity={
+                      neighborhood ? (inHood ? 0.9 : 0.06) : 0.35
+                    }
+                    strokeLinecap="round"
+                  />
+                );
+              })}
+              {/* Word labels */}
+              {laidNodes.map((n) => {
+                const dimmed = neighborhood ? !neighborhood.has(n.id) : false;
+                const color = showCommunities
+                  ? categoryColor(n.community)
+                  : "#1e293b";
+                return (
+                  <text
+                    key={n.id}
+                    x={n.x}
+                    y={n.y}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={n.fontSize}
+                    fontWeight={n.freq / maxFreq > 0.45 ? 700 : 600}
+                    fill={color}
+                    opacity={dimmed ? 0.15 : 1}
+                    stroke="#ffffff"
+                    strokeWidth={Math.max(2, n.fontSize / 5)}
+                    strokeOpacity={dimmed ? 0 : 0.85}
+                    paintOrder="stroke"
+                    className="cursor-pointer select-none"
+                    textDecoration={
+                      selectedNode === n.id ? "underline" : undefined
+                    }
+                    onMouseEnter={() => setHoveredNode(n.id)}
+                    onMouseLeave={() => setHoveredNode(null)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedNode(n.id);
+                    }}
+                  >
+                    {n.id}
+                  </text>
+                );
+              })}
+            </g>
+          </svg>
         </Card>
         {selectedNodeData && (
           <Card className="absolute right-3 top-3 w-60 shadow-lg">
@@ -370,9 +619,9 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
         )}
       </div>
       <p className="text-xs text-slate-400">
-        Hover a node to highlight its neighborhood; click it to list its
-        strongest edges. Export is PNG (vector export is not available for the
-        canvas renderer).
+        Scroll to zoom, drag to pan. Hover a word to highlight its
+        neighborhood; click it to list its strongest edges. Export is clean
+        vector SVG.
       </p>
     </div>
   );

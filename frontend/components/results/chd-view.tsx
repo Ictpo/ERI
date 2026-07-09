@@ -12,17 +12,26 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const SVG_WIDTH = 720;
-const LEAF_HEIGHT = 64;
-const MARGIN = { top: 16, right: 220, bottom: 16, left: 16 };
+/* Classic academic vertical dendrogram:
+   root at top, orthogonal connectors, terminal classes on a uniform
+   baseline, and a word / freq / chi2 table stacked under each class. */
 
-type LeafPlacement = {
-  cls: ChdClass | null;
+const COL_W = 168;
+const TABLE_COL = { word: 78, freq: 34, chi2: 44 };
+const HEADER_H = 40;
+const ROW_H = 14.5;
+const TABLE_HEAD_H = 15;
+const MAX_WORDS = 18;
+const MARGIN = { top: 14, right: 16, bottom: 14, left: 16 };
+
+type Leaf = {
   classId: number | null;
-  x: number;
-  y: number;
+  cls: ChdClass | null;
+  cx: number; // column center x
   size: number;
 };
+
+type Junction = { barY: number; x1: number; x2: number; drops: { x: number; toY: number }[] };
 
 export function ChdView({ result }: { result: ChdResult }) {
   const [selectedClassId, setSelectedClassId] = React.useState<number | null>(
@@ -36,7 +45,6 @@ export function ChdView({ result }: { result: ChdResult }) {
     return map;
   }, [result.classes]);
 
-  // Stable color per class: index in the classes array.
   const colorForClass = React.useCallback(
     (classId: number | null) => {
       if (classId === null) return "#94a3b8";
@@ -46,48 +54,83 @@ export function ChdView({ result }: { result: ChdResult }) {
     [result.classes]
   );
 
-  // Layout the binary tree horizontally with d3.
-  const { links, leaves, innerNodes, svgHeight } = React.useMemo(() => {
-    const root = d3.hierarchy<ChdNode>(result.tree, (d) => d.children ?? null);
-    const nLeaves = root.leaves().length;
-    const height = Math.max(nLeaves * LEAF_HEIGHT, 200);
-    const layout = d3
-      .cluster<ChdNode>()
-      .size([height, SVG_WIDTH - MARGIN.left - MARGIN.right]);
-    layout(root);
+  const { leaves, junctions, width, height, baselineY, tableRows } =
+    React.useMemo(() => {
+      const root = d3.hierarchy<ChdNode>(result.tree, (d) => d.children ?? null);
+      const leafNodes = root.leaves();
+      const nLeaves = leafNodes.length;
+      const width = MARGIN.left + MARGIN.right + nLeaves * COL_W;
 
-    const links: { path: string }[] = [];
-    root.links().forEach((link) => {
-      const sx = link.source.y ?? 0;
-      const sy = link.source.x ?? 0;
-      const tx = link.target.y ?? 0;
-      const ty = link.target.x ?? 0;
-      // elbow path
-      links.push({ path: `M${sx},${sy} V${ty} H${tx}` });
-    });
+      const maxDepth = Math.max(1, ...leafNodes.map((l) => l.depth));
+      const treeH = Math.max(90, Math.min(220, 46 * maxDepth));
+      const levelH = treeH / maxDepth;
+      const baselineY = MARGIN.top + treeH;
 
-    const leaves: LeafPlacement[] = root.leaves().map((leaf) => ({
-      cls: leaf.data.class_id !== null ? classById.get(leaf.data.class_id) ?? null : null,
-      classId: leaf.data.class_id,
-      x: leaf.y ?? 0,
-      y: leaf.x ?? 0,
-      size: leaf.data.size,
-    }));
+      // Leaf columns, in tree order.
+      const leafX = new Map<d3.HierarchyNode<ChdNode>, number>();
+      leafNodes.forEach((leaf, i) => {
+        leafX.set(leaf, MARGIN.left + i * COL_W + COL_W / 2);
+      });
 
-    const innerNodes = root
-      .descendants()
-      .filter((d) => d.children)
-      .map((d) => ({ x: d.y ?? 0, y: d.x ?? 0, size: d.data.size }));
+      // Internal node x = midpoint of its children's x; computed bottom-up.
+      const nodeX = new Map<d3.HierarchyNode<ChdNode>, number>();
+      const computeX = (node: d3.HierarchyNode<ChdNode>): number => {
+        if (!node.children || node.children.length === 0) {
+          const x = leafX.get(node) ?? 0;
+          nodeX.set(node, x);
+          return x;
+        }
+        const xs = node.children.map(computeX);
+        const x = (Math.min(...xs) + Math.max(...xs)) / 2;
+        nodeX.set(node, x);
+        return x;
+      };
+      computeX(root);
 
-    return {
-      links,
-      leaves,
-      innerNodes,
-      svgHeight: height + MARGIN.top + MARGIN.bottom,
-    };
-  }, [result.tree, classById]);
+      // One junction (horizontal bar + vertical drops) per internal node.
+      const junctions: Junction[] = [];
+      root.descendants().forEach((node) => {
+        if (!node.children) return;
+        const barY = MARGIN.top + node.depth * levelH;
+        const childXs = node.children.map((c) => nodeX.get(c) ?? 0);
+        junctions.push({
+          barY,
+          x1: Math.min(...childXs),
+          x2: Math.max(...childXs),
+          drops: node.children.map((c) => ({
+            x: nodeX.get(c) ?? 0,
+            // Internal children drop to their own bar; leaves drop to baseline.
+            toY: c.children ? MARGIN.top + c.depth * levelH : baselineY,
+          })),
+        });
+      });
 
-  const selected = selectedClassId !== null ? classById.get(selectedClassId) : null;
+      const leaves: Leaf[] = leafNodes.map((leaf) => ({
+        classId: leaf.data.class_id,
+        cls:
+          leaf.data.class_id !== null
+            ? classById.get(leaf.data.class_id) ?? null
+            : null,
+        cx: leafX.get(leaf) ?? 0,
+        size: leaf.data.size,
+      }));
+
+      const tableRows = Math.min(
+        MAX_WORDS,
+        Math.max(1, ...result.classes.map((c) => c.words.length))
+      );
+      const height =
+        baselineY +
+        HEADER_H +
+        TABLE_HEAD_H +
+        tableRows * ROW_H +
+        MARGIN.bottom;
+
+      return { leaves, junctions, width, height, baselineY, tableRows };
+    }, [result.tree, result.classes, classById]);
+
+  const selected =
+    selectedClassId !== null ? classById.get(selectedClassId) : null;
 
   return (
     <div className="space-y-4">
@@ -119,90 +162,183 @@ export function ChdView({ result }: { result: ChdResult }) {
         <CardContent className="overflow-x-auto p-2">
           <svg
             ref={svgRef}
-            viewBox={`0 0 ${SVG_WIDTH} ${svgHeight}`}
-            width={SVG_WIDTH}
-            height={svgHeight}
-            className="mx-auto block max-w-full"
+            viewBox={`0 0 ${width} ${height}`}
+            width={width}
+            height={height}
+            className="mx-auto block"
             role="img"
             aria-label="CHD dendrogram"
+            fontFamily="Inter, system-ui, sans-serif"
           >
-            <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
-              {links.map((link, i) => (
-                <path
+            {/* Tree connectors */}
+            {junctions.map((j, i) => (
+              <g key={i} stroke="#64748b" strokeWidth={1.4} fill="none">
+                <line x1={j.x1} y1={j.barY} x2={j.x2} y2={j.barY} />
+                {j.drops.map((d, k) => (
+                  <line key={k} x1={d.x} y1={j.barY} x2={d.x} y2={d.toY} />
+                ))}
+              </g>
+            ))}
+
+            {/* Terminal classes on the shared baseline */}
+            {leaves.map((leaf, i) => {
+              const color = colorForClass(leaf.classId);
+              const isSelected =
+                leaf.classId !== null && leaf.classId === selectedClassId;
+              const x0 = leaf.cx - (COL_W - 12) / 2;
+              const boxW = COL_W - 12;
+              const words = leaf.cls ? leaf.cls.words.slice(0, MAX_WORDS) : [];
+              const tableX = {
+                word: x0 + 5,
+                freq: x0 + TABLE_COL.word + TABLE_COL.freq,
+                chi2: x0 + boxW - 5,
+              };
+              return (
+                <g
                   key={i}
-                  d={link.path}
-                  fill="none"
-                  stroke="#cbd5e1"
-                  strokeWidth={1.5}
-                />
-              ))}
-              {innerNodes.map((node, i) => (
-                <circle key={i} cx={node.x} cy={node.y} r={3} fill="#94a3b8" />
-              ))}
-              {leaves.map((leaf, i) => {
-                const color = colorForClass(leaf.classId);
-                const isSelected =
-                  leaf.classId !== null && leaf.classId === selectedClassId;
-                const blockHeight = Math.max(
-                  22,
-                  Math.min(
-                    LEAF_HEIGHT - 14,
-                    22 +
-                      (leaf.size /
-                        Math.max(1, Math.max(...leaves.map((l) => l.size)))) *
-                        26
-                  )
-                );
-                const label = leaf.cls
-                  ? `Class ${leaf.cls.id} — ${leaf.cls.label}`
-                  : "Unclassified";
-                const pct = leaf.cls ? `${leaf.cls.pct.toFixed(1)}%` : "";
-                return (
-                  <g
-                    key={i}
-                    transform={`translate(${leaf.x},${leaf.y})`}
-                    className={leaf.classId !== null ? "cursor-pointer" : undefined}
-                    onClick={() =>
-                      leaf.classId !== null && setSelectedClassId(leaf.classId)
-                    }
-                  >
+                  className={
+                    leaf.classId !== null ? "cursor-pointer" : undefined
+                  }
+                  onClick={() =>
+                    leaf.classId !== null && setSelectedClassId(leaf.classId)
+                  }
+                >
+                  {/* Header */}
+                  <rect
+                    x={x0}
+                    y={baselineY}
+                    width={boxW}
+                    height={HEADER_H}
+                    fill={color}
+                  />
+                  {isSelected && (
                     <rect
-                      x={6}
-                      y={-blockHeight / 2}
-                      width={200}
-                      height={blockHeight}
-                      rx={5}
-                      fill={color}
-                      fillOpacity={isSelected ? 0.95 : 0.75}
-                      stroke={isSelected ? "#0f172a" : "none"}
-                      strokeWidth={isSelected ? 1.5 : 0}
+                      data-export-ignore="true"
+                      x={x0 - 2}
+                      y={baselineY - 2}
+                      width={boxW + 4}
+                      height={HEADER_H + 4}
+                      fill="none"
+                      stroke="#0f172a"
+                      strokeWidth={2}
                     />
-                    <text
-                      x={14}
-                      y={-2}
-                      fontSize={11}
-                      fontWeight={600}
-                      fill="#ffffff"
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {label.length > 32 ? label.slice(0, 31) + "…" : label}
-                    </text>
-                    <text
-                      x={14}
-                      y={11}
-                      fontSize={10}
-                      fill="#ffffff"
-                      fillOpacity={0.9}
-                      style={{ pointerEvents: "none" }}
-                    >
-                      {leaf.cls
-                        ? `${formatNumber(leaf.size)} segments · ${pct}`
-                        : `${formatNumber(leaf.size)} segments`}
-                    </text>
-                  </g>
-                );
-              })}
-            </g>
+                  )}
+                  <text
+                    x={leaf.cx}
+                    y={baselineY + 16}
+                    textAnchor="middle"
+                    fontSize={12.5}
+                    fontWeight={700}
+                    fill="#ffffff"
+                  >
+                    {leaf.cls ? `Class ${leaf.cls.id}` : "Unclassified"}
+                    {leaf.cls ? ` — ${leaf.cls.pct.toFixed(1)}%` : ""}
+                  </text>
+                  <text
+                    x={leaf.cx}
+                    y={baselineY + 30}
+                    textAnchor="middle"
+                    fontSize={10}
+                    fill="#ffffff"
+                    fillOpacity={0.92}
+                  >
+                    {formatNumber(leaf.size)} segments
+                  </text>
+
+                  {/* Word table */}
+                  {leaf.cls && (
+                    <>
+                      <text
+                        x={tableX.word}
+                        y={baselineY + HEADER_H + 11}
+                        fontSize={8}
+                        fontWeight={600}
+                        fill="#94a3b8"
+                        letterSpacing="0.04em"
+                      >
+                        WORD
+                      </text>
+                      <text
+                        x={tableX.freq}
+                        y={baselineY + HEADER_H + 11}
+                        textAnchor="end"
+                        fontSize={8}
+                        fontWeight={600}
+                        fill="#94a3b8"
+                        letterSpacing="0.04em"
+                      >
+                        FREQ
+                      </text>
+                      <text
+                        x={tableX.chi2}
+                        y={baselineY + HEADER_H + 11}
+                        textAnchor="end"
+                        fontSize={8}
+                        fontWeight={600}
+                        fill="#94a3b8"
+                        letterSpacing="0.04em"
+                      >
+                        χ²
+                      </text>
+                      {words.map((w, r) => {
+                        const y =
+                          baselineY +
+                          HEADER_H +
+                          TABLE_HEAD_H +
+                          (r + 0.75) * ROW_H;
+                        const form =
+                          w.form.length > 12
+                            ? w.form.slice(0, 11) + "…"
+                            : w.form;
+                        return (
+                          <g key={w.form} fontSize={9.5}>
+                            <text x={tableX.word} y={y} fill="#1e293b" fontWeight={500}>
+                              {form}
+                            </text>
+                            <text
+                              x={tableX.freq}
+                              y={y}
+                              textAnchor="end"
+                              fill="#64748b"
+                            >
+                              {w.freq_in}
+                            </text>
+                            <text
+                              x={tableX.chi2}
+                              y={y}
+                              textAnchor="end"
+                              fill="#475569"
+                            >
+                              {w.chi2.toFixed(1)}
+                            </text>
+                          </g>
+                        );
+                      })}
+                      {/* Column rule under the header strip */}
+                      <line
+                        x1={x0}
+                        y1={baselineY + HEADER_H + TABLE_HEAD_H}
+                        x2={x0 + boxW}
+                        y2={baselineY + HEADER_H + TABLE_HEAD_H}
+                        stroke="#e2e8f0"
+                        strokeWidth={1}
+                      />
+                      <rect
+                        x={x0}
+                        y={baselineY}
+                        width={boxW}
+                        height={
+                          HEADER_H + TABLE_HEAD_H + tableRows * ROW_H + 6
+                        }
+                        fill="none"
+                        stroke="#e2e8f0"
+                        strokeWidth={1}
+                      />
+                    </>
+                  )}
+                </g>
+              );
+            })}
           </svg>
         </CardContent>
       </Card>

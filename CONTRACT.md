@@ -1,4 +1,4 @@
-# Iramuteq Web — API Contract (v1)
+# ERI: Engine for Reinert Insights — API Contract (v1)
 
 Backend: FastAPI at `http://localhost:8000`. All routes prefixed `/api`.
 Frontend: Next.js at `http://localhost:3000`, reads `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`).

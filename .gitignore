@@ -2,6 +2,11 @@ __pycache__/
 *.pyc
 .venv/
 backend/data/
+backend/build/
+backend/dist/
+backend/*.spec
+release/
+frontend/out/
 node_modules/
 .next/
 out/

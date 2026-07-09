@@ -1,7 +1,7 @@
-# Iramuteq Web — Frontend
+# ERI: Engine for Reinert Insights — Frontend
 
-Next.js 14 (App Router) + TypeScript + Tailwind CSS frontend for Iramuteq Web,
-a browser-based clone of the Iramuteq text-analysis software.
+Next.js 14 (App Router) + TypeScript + Tailwind CSS frontend for ERI,
+a browser-based reimplementation of the Iramuteq text-analysis software.
 
 Implements the full API contract in `../CONTRACT.md`: projects, corpus
 upload/preview/editing, and four async analyses (text statistics, Reinert

@@ -74,7 +74,7 @@ export function ProjectList() {
       setCreateOpen(false);
       setName("");
       setDescription("");
-      router.push(`/project/${project.id}`);
+      router.push(`/project/?id=${project.id}`);
     } catch (err) {
       toastError(err, "Could not create project");
     } finally {
@@ -148,7 +148,7 @@ export function ProjectList() {
               className="group relative transition-shadow hover:shadow-md"
             >
               <Link
-                href={`/project/${project.id}`}
+                href={`/project/?id=${project.id}`}
                 className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
               >
                 <CardHeader>

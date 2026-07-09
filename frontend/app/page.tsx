@@ -10,7 +10,9 @@ export default function HomePage() {
             <ScatterChart className="h-5 w-5" />
           </div>
           <div>
-            <h1 className="text-lg font-semibold tracking-tight">Iramuteq Web</h1>
+            <h1 className="text-lg font-semibold tracking-tight">
+              ERI: Engine for Reinert Insights
+            </h1>
             <p className="text-sm text-slate-500">
               Statistical text analysis in the browser — word statistics, Reinert
               classification, similarity networks and correspondence analysis.
