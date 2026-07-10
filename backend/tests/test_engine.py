@@ -59,6 +59,16 @@ def test_parse_txt_legacy_markers():
     assert detected == ["age", "sex"]
 
 
+def test_parse_txt_strips_utf8_bom():
+    # A leading UTF-8 BOM must not hide the first '****' marker (Windows editors
+    # commonly save it). The first document must still be recognized.
+    raw = "\ufeff**** *sex_f\nFirst doc text.\n**** *sex_m\nSecond doc text."
+    docs, detected, warnings = parse_txt(raw)
+    assert len(docs) == 2
+    assert docs[0]["variables"] == {"sex": "f"}
+    assert not any("ignored" in w for w in warnings)
+
+
 def test_parse_txt_blank_line_fallback():
     docs, detected, warnings = parse_txt("First paragraph doc.\n\nSecond paragraph doc.")
     assert len(docs) == 2 and detected == [] and warnings

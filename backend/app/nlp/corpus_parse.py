@@ -34,6 +34,10 @@ def _parse_tags(line: str) -> dict[str, str]:
 def parse_txt(content: str) -> tuple[list[dict], list[str], list[str]]:
     """Returns (documents, detected_variables, warnings)."""
     warnings: list[str] = []
+    # Strip a leading UTF-8 BOM: Windows editors (Notepad, Excel) often save it,
+    # and it would push the first '****' marker off column 0, silently dropping
+    # the first document.
+    content = content.lstrip("\ufeff")
     lines = content.splitlines()
     has_markers = any(_STAR_LINE.match(l) for l in lines)
     documents: list[dict] = []
@@ -84,6 +88,10 @@ def parse_txt(content: str) -> tuple[list[dict], list[str], list[str]]:
 
 def parse_csv(content: bytes, text_column: str | None, encoding: str = "utf-8") -> tuple[list[dict], list[str], list[str]]:
     warnings: list[str] = []
+    # utf-8-sig transparently strips a UTF-8 BOM (common in Excel/Windows CSV
+    # exports); without it the first column name gets a hidden BOM prefix.
+    if encoding.lower().replace("-", "") in ("utf8", "utf8sig"):
+        encoding = "utf-8-sig"
     try:
         df = pd.read_csv(io.BytesIO(content), encoding=encoding, dtype=str, keep_default_na=False)
     except UnicodeDecodeError:
