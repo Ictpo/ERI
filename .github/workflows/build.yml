@@ -1,0 +1,102 @@
+name: Build desktop binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: ERI-win64
+            readme: packaging/LEIA-ME.txt
+          - os: macos-latest # Apple Silicon (arm64)
+            artifact: ERI-macos-arm64
+            readme: packaging/LEIA-ME-MAC.txt
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend static export
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build binary
+        working-directory: backend
+        run: python build_exe.py
+
+      - name: Smoke-test binary boots
+        shell: bash
+        working-directory: backend/dist
+        run: |
+          ./ERI* > boot.log 2>&1 &
+          APP_PID=$!
+          for i in $(seq 1 60); do
+            sleep 2
+            PORT=$(grep -o 'http://127.0.0.1:[0-9]*' boot.log | head -1 | grep -o '[0-9]*$' || true)
+            if [ -n "$PORT" ] && curl -sf "http://127.0.0.1:$PORT/api/health" > /dev/null; then
+              echo "binary healthy on port $PORT"
+              curl -sf "http://127.0.0.1:$PORT/" | head -c 200
+              kill $APP_PID
+              exit 0
+            fi
+          done
+          echo "::error::binary did not become healthy"
+          cat boot.log
+          kill $APP_PID 2>/dev/null || true
+          exit 1
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path backend/dist/ERI.exe, ${{ matrix.readme }}, samples/demo_corpus.txt -DestinationPath ${{ matrix.artifact }}.zip
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: zip -j ${{ matrix.artifact }}.zip backend/dist/ERI ${{ matrix.readme }} samples/demo_corpus.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Create GitHub release with binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" *.zip \
+            --repo "${{ github.repository }}" \
+            --title "ERI ${{ github.ref_name }}" \
+            --generate-notes

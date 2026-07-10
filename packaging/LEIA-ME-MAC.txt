@@ -1,0 +1,39 @@
+ERI: Engine for Reinert Insights — versao macOS
+=================================================
+
+Requisito: Mac com chip Apple Silicon (M1/M2/M3/M4 — Macs de 2020 em
+diante). Para Macs Intel antigos, compile a partir do codigo-fonte:
+https://github.com/Ictpo/ERI
+
+Como usar:
+
+1. Descompacte o zip. Voce tera um arquivo chamado "ERI".
+
+2. Primeira abertura — o macOS bloqueia apps nao assinados baixados da
+   internet (Gatekeeper). Duas opcoes:
+
+   OPCAO A (Ajustes):
+   - De um duplo clique em ERI. O macOS vai bloquear.
+   - Abra Ajustes do Sistema > Privacidade e Seguranca, role ate o
+     final e clique em "Abrir Mesmo Assim" ao lado do aviso sobre ERI.
+
+   OPCAO B (Terminal — mais rapido):
+   - Abra o Terminal na pasta do arquivo e rode:
+       chmod +x ./ERI
+       xattr -d com.apple.quarantine ./ERI
+       ./ERI
+
+3. A primeira abertura demora de 10 a 30 segundos (o app se
+   descompacta). Uma janela de Terminal mostra o endereco — mantenha-a
+   aberta enquanto usa o programa. O navegador abre sozinho.
+
+4. O arquivo demo_corpus.txt incluido e um corpus de exemplo no formato
+   legado do Iramuteq (marcadores **** *variavel_valor) — use-o para
+   testar. Voce tambem pode montar um corpus do zero na propria
+   interface (botao "Compose document by document").
+
+Seus dados ficam salvos em:
+  ~/Library/Application Support/ERI/eri.db
+entao voce pode atualizar o ERI sem perder projetos.
+
+Para encerrar: Ctrl+C na janela do Terminal (ou feche-a).

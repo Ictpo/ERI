@@ -24,9 +24,13 @@ cd frontend; npm run dev
 Other modes (both serve UI + API from ONE process on :8000):
 - Docker: `docker compose up --build` (root Dockerfile: node stage exports UI,
   python stage serves it; volume `eri-data`).
-- Desktop exe: `cd frontend; npm run build` then
-  `cd backend; powershell -File build_exe.ps1` → `backend/dist/ERI.exe`
-  (PyInstaller onefile; picks a free port, opens browser, DB in %LOCALAPPDATA%\ERI).
+- Desktop binaries: `cd frontend; npm run build` then `backend/build_exe.py`
+  (wrappers: `build_exe.ps1` Windows, `build_exe.sh` mac/linux) → `backend/dist/ERI(.exe)`.
+  PyInstaller onefile; free port, opens browser; data dir is per-OS
+  (%LOCALAPPDATA%\ERI | ~/Library/Application Support/ERI | ~/.local/share/ERI).
+  PyInstaller CANNOT cross-compile — `.github/workflows/build.yml` builds
+  win64 + macos-arm64 on tag push (`v*`) and publishes a GitHub Release
+  (instruction files live in `packaging/`; smoke test boots the binary in CI).
 
 The frontend is a STATIC EXPORT (`output: "export"`, trailingSlash) — the
 workspace route is `/project/?id=...` (query param, NOT a dynamic segment).

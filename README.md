@@ -32,11 +32,18 @@ stack replaced by a FastAPI statistical engine and an interactive Next.js interf
 
 Three ways to run ERI, most convenient first:
 
-**Windows exe (no installs at all)** — build once, share freely:
+**Standalone binaries (no installs at all)** — download from
+[GitHub Releases](https://github.com/Ictpo/ERI/releases): `ERI-win64.zip`
+(Windows) and `ERI-macos-arm64.zip` (Apple Silicon Macs). Built automatically
+by CI (`.github/workflows/build.yml`) on every `v*` tag — PyInstaller cannot
+cross-compile, so each OS builds its own binary.
+
+Build locally instead:
 
 ```powershell
 cd frontend; npm install; npm run build          # static export -> frontend/out
-cd ..\backend; powershell -ExecutionPolicy Bypass -File build_exe.ps1
+cd ..\backend; powershell -ExecutionPolicy Bypass -File build_exe.ps1   # Windows
+# or on macOS/Linux:  cd ../backend && ./build_exe.sh
 .\dist\ERI.exe                                    # opens the browser by itself
 ```
 

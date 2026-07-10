@@ -100,6 +100,15 @@ change).
    project→preview→save→CHD flow via bundled SciPy/sklearn → 4 classes, 92.6%
    classified, `SMOKE OK`.
 
+## CI / releases (added 2026-07-10)
+
+`.github/workflows/build.yml`: on `v*` tags (or manual dispatch) builds the
+frontend export + PyInstaller binary on windows-latest AND macos-latest (Apple
+Silicon), smoke-tests that each binary boots and serves `/api/health`, zips
+them with `packaging/LEIA-ME*.txt` + the demo corpus, and publishes a GitHub
+Release. This is how the macOS version ships — PyInstaller can't cross-compile
+from Windows. Intel Macs: build from source with `backend/build_exe.sh`.
+
 ## Known gaps / next steps
 
 - Docker single-container path written but **never built/run** (was true before, still

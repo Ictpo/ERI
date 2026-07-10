@@ -18,9 +18,20 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _data_dir() -> str:
+    home = os.path.expanduser("~")
+    if os.name == "nt":
+        return os.path.join(os.environ.get("LOCALAPPDATA") or home, "ERI")
+    if sys.platform == "darwin":
+        return os.path.join(home, "Library", "Application Support", "ERI")
+    return os.path.join(
+        os.environ.get("XDG_DATA_HOME") or os.path.join(home, ".local", "share"),
+        "ERI",
+    )
+
+
 def main() -> None:
-    appdata = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    data_dir = os.path.join(appdata, "ERI")
+    data_dir = _data_dir()
     os.makedirs(data_dir, exist_ok=True)
     os.environ.setdefault("IRAMUTEQ_DB", os.path.join(data_dir, "eri.db"))
 

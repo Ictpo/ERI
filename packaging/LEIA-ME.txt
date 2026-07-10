@@ -1,0 +1,29 @@
+ERI: Engine for Reinert Insights
+=================================
+
+Como usar (Windows):
+
+1. De um duplo clique em ERI.exe.
+   - O Windows SmartScreen pode avisar que o app nao e assinado.
+     Clique em "Mais informacoes" > "Executar assim mesmo".
+   - A primeira abertura demora de 10 a 30 segundos (o app se
+     descompacta na memoria). Uma janela preta de console vai abrir —
+     mantenha essa janela aberta enquanto usa o programa.
+
+2. O navegador abre sozinho no endereco do ERI (http://127.0.0.1:...).
+   Se nao abrir, copie o endereco mostrado na janela do console.
+
+3. Crie um projeto, envie um corpus (.txt ou .csv) e rode as analises:
+   - Estatisticas de texto (frequencias, hapax, nuvem de palavras)
+   - Classificacao de Reinert / CHD (dendrograma com palavras e X²)
+   - Analise de similitude (rede de coocorrencias com comunidades)
+   - Analise fatorial de correspondencia (AFC)
+
+4. O arquivo demo_corpus.txt incluido neste zip e um corpus de exemplo
+   no formato legado do Iramuteq (marcadores **** *variavel_valor) —
+   use-o para testar.
+
+Seus dados ficam salvos em %LOCALAPPDATA%\ERI\eri.db (nao dentro do
+zip), entao voce pode atualizar o ERI.exe sem perder projetos.
+
+Para encerrar: feche a janela do console (ou Ctrl+C nela).
