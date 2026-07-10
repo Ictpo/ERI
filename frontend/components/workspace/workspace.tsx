@@ -13,11 +13,13 @@ import { toastError } from "@/lib/toast-error";
 import { toast } from "@/components/ui/use-toast";
 import { Sidebar } from "./sidebar";
 import { CorpusBuilder } from "./corpus-builder";
+import { CorpusComposer } from "./corpus-composer";
 import { AnalysisLauncher } from "./analysis-launcher";
 import { ResultsPane } from "./results-pane";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
-import { RefreshCw } from "lucide-react";
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { ListPlus, RefreshCw, Upload } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export type ProgressMap = Record<string, AnalysisEvent>;
@@ -30,7 +32,11 @@ export function Workspace({ projectId }: { projectId: string }) {
   );
   const [openAnalysisId, setOpenAnalysisId] = React.useState<string | null>(null);
   const [progress, setProgress] = React.useState<ProgressMap>({});
-  const [builderOpen, setBuilderOpen] = React.useState(false);
+  // null = default view (launcher if corpus, chooser if not);
+  // "choose" = pick upload vs compose; "upload" / "compose" = active builder.
+  const [builderMode, setBuilderMode] = React.useState<
+    "choose" | "upload" | "compose" | null
+  >(null);
   const sourcesRef = React.useRef<Map<string, EventSource>>(new Map());
 
   const load = React.useCallback(async () => {
@@ -181,7 +187,7 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   function handleCorpusSaved(summary: CorpusSummary) {
     setProject((prev) => (prev ? { ...prev, corpus_summary: summary } : prev));
-    setBuilderOpen(false);
+    setBuilderMode(null);
     toast({
       variant: "success",
       title: "Corpus saved",
@@ -227,7 +233,7 @@ export function Workspace({ projectId }: { projectId: string }) {
     );
   }
 
-  const hasCorpus = project.corpus_summary !== null && !builderOpen;
+  const hasCorpus = project.corpus_summary !== null && builderMode === null;
   const openAnalysis = analyses.find((a) => a.id === openAnalysisId) ?? null;
 
   return (
@@ -248,16 +254,29 @@ export function Workspace({ projectId }: { projectId: string }) {
               <AnalysisLauncher
                 corpusSummary={project.corpus_summary}
                 onRun={runAnalysis}
-                onReplaceCorpus={() => setBuilderOpen(true)}
+                onReplaceCorpus={() => setBuilderMode("choose")}
               />
-            ) : (
+            ) : builderMode === "upload" ? (
               <CorpusBuilder
                 projectId={projectId}
                 hasExistingCorpus={project.corpus_summary !== null}
                 onSaved={handleCorpusSaved}
+                onCancel={() => setBuilderMode(null)}
+              />
+            ) : builderMode === "compose" ? (
+              <CorpusComposer
+                projectId={projectId}
+                hasExistingCorpus={project.corpus_summary !== null}
+                onSaved={handleCorpusSaved}
+                onCancel={() => setBuilderMode(null)}
+              />
+            ) : (
+              <CorpusModeChooser
+                hasCorpus={project.corpus_summary !== null}
+                onPick={(mode) => setBuilderMode(mode)}
                 onCancel={
                   project.corpus_summary !== null
-                    ? () => setBuilderOpen(false)
+                    ? () => setBuilderMode(null)
                     : undefined
                 }
               />
@@ -276,5 +295,70 @@ export function Workspace({ projectId }: { projectId: string }) {
         </div>
       </div>
     </TooltipProvider>
+  );
+}
+
+function CorpusModeChooser({
+  hasCorpus,
+  onPick,
+  onCancel,
+}: {
+  hasCorpus: boolean;
+  onPick: (mode: "upload" | "compose") => void;
+  onCancel?: () => void;
+}) {
+  return (
+    <div className="mx-auto max-w-xl space-y-4 pt-6">
+      <div>
+        <h2 className="text-xl font-semibold tracking-tight">
+          {hasCorpus ? "Replace or edit the corpus" : "Build your corpus"}
+        </h2>
+        <p className="text-sm text-slate-500">
+          Upload a prepared file, or compose it document by document.
+        </p>
+      </div>
+      <button className="w-full text-left" onClick={() => onPick("upload")}>
+        <Card className="transition-shadow hover:shadow-md">
+          <CardHeader className="flex-row items-center gap-3 space-y-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+              <Upload className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-base">Upload a file</CardTitle>
+              <CardDescription>
+                A .txt (legacy &quot;****&quot; markers supported) or a .csv
+                table — then review and edit variables.
+              </CardDescription>
+            </div>
+          </CardHeader>
+        </Card>
+      </button>
+      <button className="w-full text-left" onClick={() => onPick("compose")}>
+        <Card className="transition-shadow hover:shadow-md">
+          <CardHeader className="flex-row items-center gap-3 space-y-0">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600">
+              <ListPlus className="h-5 w-5" />
+            </div>
+            <div>
+              <CardTitle className="text-base">
+                Compose document by document
+                {hasCorpus ? " (loads the current corpus)" : ""}
+              </CardTitle>
+              <CardDescription>
+                Define variables once, then paste each interview and pick its
+                values from dropdowns — no markers to write.
+              </CardDescription>
+            </div>
+          </CardHeader>
+        </Card>
+      </button>
+      {onCancel && (
+        <div className="text-center">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+        </div>
+      )}
+    </div>
   );
 }
