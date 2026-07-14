@@ -123,7 +123,7 @@ export function StatsView({ result }: { result: StatsResult }) {
               ) : (
                 <div className="max-h-56 overflow-y-auto rounded-md bg-slate-50 p-3">
                   <p className="text-xs leading-6 text-slate-600">
-                    {result.hapax.join(" · ")}
+                    {result.hapax.map((w) => w.replace(/_+$/, "")).join(" · ")}
                   </p>
                 </div>
               )}
@@ -164,7 +164,7 @@ export function StatsView({ result }: { result: StatsResult }) {
               {rows.map((row) => (
                 <tr key={row.form} className="hover:bg-slate-50/60">
                   <td className="border-b border-slate-100 px-4 py-1.5 font-medium text-slate-700">
-                    {row.form}
+                    {row.form.replace(/_+$/, "")}
                   </td>
                   <td className="border-b border-slate-100 px-4 py-1.5 text-right tabular-nums">
                     {formatNumber(row.freq)}

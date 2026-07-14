@@ -33,7 +33,8 @@ const VIEW_W = 760;
 const VIEW_H = 560;
 
 type LaidNode = {
-  id: string;
+  id: string; // raw form — identity for edges, keys and the simulation
+  label: string; // display form — protection underscores stripped
   freq: number;
   community: number;
   x: number;
@@ -112,11 +113,14 @@ function computeLayout(
   const rng = d3.randomLcg(seed || 0.42);
   const simNodes = nodes.map((n, i) => {
     const fontSize = 11 + 22 * Math.sqrt(n.freq / maxFreq);
+    const label = n.id.replace(/_+$/, "");
     return {
       ...n,
+      label,
       index: i,
       fontSize,
-      halfWidth: Math.max(fontSize * 0.75, n.id.length * fontSize * 0.29),
+      // Collision radius from the DISPLAYED string, not the raw id.
+      halfWidth: Math.max(fontSize * 0.75, label.length * fontSize * 0.29),
       // Deterministic ring initialization (jittered by the seeded RNG).
       x: VIEW_W / 2 + 160 * Math.cos((i / nodes.length) * 2 * Math.PI) + 40 * (rng() - 0.5),
       y: VIEW_H / 2 + 160 * Math.sin((i / nodes.length) * 2 * Math.PI) + 40 * (rng() - 0.5),
@@ -562,7 +566,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                       setSelectedNode(n.id);
                     }}
                   >
-                    {n.id}
+                    {n.label}
                   </text>
                 );
               })}
@@ -575,7 +579,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               <div className="mb-2 flex items-start justify-between">
                 <div>
                   <p className="text-sm font-semibold text-slate-800">
-                    {selectedNodeData.id}
+                    {selectedNodeData.id.replace(/_+$/, "")}
                   </p>
                   <p className="text-xs text-slate-500">
                     freq {formatNumber(selectedNodeData.freq)} · community{" "}
@@ -600,7 +604,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                     className="flex justify-between rounded px-1.5 py-1 hover:bg-slate-50"
                   >
                     <span className="truncate font-medium text-slate-700">
-                      {e.other}
+                      {e.other.replace(/_+$/, "")}
                     </span>
                     <span className="ml-2 tabular-nums text-slate-500">
                       {metric === "cooc" ? e[metric] : e[metric].toFixed(3)}

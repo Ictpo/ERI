@@ -60,7 +60,9 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
       .size([WIDTH, HEIGHT])
       .words(
         selection.map((w) => ({
-          text: w.form,
+          // Strip protection underscores BEFORE layout so the computed
+          // bounding box matches what is actually rendered.
+          text: w.form.replace(/_+$/, ""),
           size: scale(w.freq),
         }))
       )
@@ -135,9 +137,9 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
               aria-label="Word cloud"
             >
               <g transform={`translate(${WIDTH / 2},${HEIGHT / 2})`}>
-                {placed.map((w) => (
+                {placed.map((w, i) => (
                   <text
-                    key={w.text}
+                    key={`${w.text}-${i}`}
                     textAnchor="middle"
                     transform={`translate(${w.x},${w.y}) rotate(${w.rotate})`}
                     fontSize={w.size}

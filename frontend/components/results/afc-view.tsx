@@ -274,7 +274,7 @@ export function AfcView({ result }: { result: AfcResult }) {
                         fontFamily="Inter, system-ui, sans-serif"
                         pointerEvents="none"
                       >
-                        {point.label}
+                        {point.label.replace(/_+$/, "")}
                       </text>
                     </g>
                   );
@@ -317,7 +317,7 @@ export function AfcView({ result }: { result: AfcResult }) {
               }}
             >
               <p className="font-semibold text-slate-800">
-                {hover.point.label}{" "}
+                {hover.point.label.replace(/_+$/, "")}{" "}
                 <span className="font-normal text-slate-400">
                   ({hover.kind === "word" ? "word" : "modality"})
                 </span>

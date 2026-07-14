@@ -25,8 +25,11 @@ except ImportError:  # pragma: no cover
 
 SUPPORTED_LANGS = ("en", "pt", "fr", "es")
 
-# Words: letter sequences (incl. accented), allowing internal apostrophes/hyphens.
-_WORD_RE = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*", re.UNICODE)
+# Words: letter/underscore sequences (incl. accented), allowing internal
+# apostrophes/hyphens. Underscores are preserved so users can protect
+# compound forms ("dia_a_dia") and lemma-locked words ("havaianas_"),
+# matching the classic Iramuteq convention.
+_WORD_RE = re.compile(r"[^\W\d]+(?:['’_-][^\W\d]+)*", re.UNICODE)
 
 
 @dataclass
@@ -62,7 +65,8 @@ def normalize_tokens(tokens: list[str], p: TextParams) -> list[str]:
     for t in tokens:
         if t in sw:
             continue
-        form = _lemma(t, p.lang) if p.lemmatize else t
+        # Underscored tokens are user-protected: never lemmatized.
+        form = t if "_" in t else (_lemma(t, p.lang) if p.lemmatize else t)
         form = form.lower()
         if form in sw or len(form) < 2:
             continue

@@ -286,10 +286,11 @@ export function ChdView({ result }: { result: ChdResult }) {
                           HEADER_H +
                           TABLE_HEAD_H +
                           (r + 0.75) * ROW_H;
+                        const display = w.form.replace(/_+$/, "");
                         const form =
-                          w.form.length > 12
-                            ? w.form.slice(0, 11) + "…"
-                            : w.form;
+                          display.length > 12
+                            ? display.slice(0, 11) + "…"
+                            : display;
                         return (
                           <g key={w.form} fontSize={9.5}>
                             <text x={tableX.word} y={y} fill="#1e293b" fontWeight={500}>
@@ -401,7 +402,7 @@ function ClassInspector({
             className="inline-block h-3 w-3 rounded-full"
             style={{ backgroundColor: color }}
           />
-          Class {cls.id} — {cls.label}
+          Class {cls.id} — {cls.label.replace(/_+(?= \/|$)/g, "")}
           <span className="font-normal text-slate-400">
             ({formatNumber(cls.size)} segments, {cls.pct.toFixed(1)}%)
           </span>
@@ -445,7 +446,7 @@ function ClassInspector({
                 {topWords.map((w) => (
                   <div key={w.form} className="flex items-center gap-2 text-xs">
                     <span className="w-28 shrink-0 truncate text-right font-medium text-slate-700">
-                      {w.form}
+                      {w.form.replace(/_+$/, "")}
                     </span>
                     <div className="h-4 flex-1 rounded-sm bg-slate-100">
                       <div
@@ -485,7 +486,7 @@ function ClassInspector({
                     {cls.words.map((w) => (
                       <tr key={w.form} className="hover:bg-slate-50/60">
                         <td className="border-b border-slate-100 px-3 py-1.5 font-medium text-slate-700">
-                          {w.form}
+                          {w.form.replace(/_+$/, "")}
                         </td>
                         <td className="border-b border-slate-100 px-3 py-1.5 text-right tabular-nums">
                           {w.chi2.toFixed(2)}

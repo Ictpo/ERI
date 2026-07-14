@@ -91,6 +91,17 @@ def test_tokenize_stopwords_and_lemmas():
     assert "chef" in forms  # lemmatized plural
 
 
+def test_underscored_tokens_survive_and_skip_lemmatization():
+    # Iramuteq convention: underscores join compounds (dia_a_dia) and a
+    # trailing underscore locks a word against lemmatization (havaianas_).
+    p = TextParams.from_dict({**P, "lang": "pt"})
+    forms = tokenize("No dia_a_dia uso Havaianas_ e casas grandes", p)
+    assert "dia_a_dia" in forms          # kept whole, not split at underscores
+    assert "havaianas_" in forms          # trailing underscore preserved
+    assert "casa" in forms                # normal words still lemmatized
+    assert "havaiana" not in forms        # protected word was NOT lemmatized
+
+
 def test_segments_respect_target_size():
     texts, _ = bi_corpus(2)
     segs = segment_corpus(texts, seg_size=40)
