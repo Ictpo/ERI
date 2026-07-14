@@ -47,24 +47,30 @@ jobs:
         working-directory: backend
         run: python build_exe.py
 
-      - name: Smoke-test binary boots
+      - name: Smoke-test binary boots (headless)
         shell: bash
         working-directory: backend/dist
+        env:
+          ERI_HEADLESS: "1"
+          ERI_PORT_FILE: port.txt
         run: |
+          rm -f port.txt
           ./ERI* > boot.log 2>&1 &
           APP_PID=$!
           for i in $(seq 1 60); do
             sleep 2
-            PORT=$(grep -o 'http://127.0.0.1:[0-9]*' boot.log | head -1 | grep -o '[0-9]*$' || true)
-            if [ -n "$PORT" ] && curl -sf "http://127.0.0.1:$PORT/api/health" > /dev/null; then
-              echo "binary healthy on port $PORT"
-              curl -sf "http://127.0.0.1:$PORT/" | head -c 200
-              kill $APP_PID
-              exit 0
+            if [ -f port.txt ]; then
+              PORT=$(cat port.txt)
+              if [ -n "$PORT" ] && curl -sf "http://127.0.0.1:$PORT/api/health" > /dev/null; then
+                echo "binary healthy on port $PORT"
+                curl -sf "http://127.0.0.1:$PORT/" | head -c 200
+                kill $APP_PID
+                exit 0
+              fi
             fi
           done
           echo "::error::binary did not become healthy"
-          cat boot.log
+          cat boot.log || true
           kill $APP_PID 2>/dev/null || true
           exit 1
 

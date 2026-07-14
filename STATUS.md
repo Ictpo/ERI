@@ -100,6 +100,18 @@ change).
    project→preview→save→CHD flow via bundled SciPy/sklearn → 4 classes, 92.6%
    classified, `SMOKE OK`.
 
+## Native desktop window (added 2026-07-14)
+
+The desktop build now opens a native pywebview window (1200×800, WebView2 on
+Windows / Cocoa on macOS) instead of a browser tab. `backend/desktop.py`: uvicorn
+runs on a daemon thread, `webview.start()` blocks the main thread, and closing
+the window sets `server.should_exit` — verified no lingering process/port.
+Windows exe is `--windowed`; stdout/stderr are None in that mode, so the
+launcher redirects them to `<data_dir>/eri.log` (required — uvicorn logging
+crashes otherwise; this was caught in testing). CI smoke test now runs the
+binary with `ERI_HEADLESS=1` + `ERI_PORT_FILE` instead of grepping stdout.
+Browser-based fallback: tag/release `v1.2.0-browser`.
+
 ## CI / releases (added 2026-07-10)
 
 `.github/workflows/build.yml`: on `v*` tags (or manual dispatch) builds the

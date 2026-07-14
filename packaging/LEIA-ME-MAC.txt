@@ -24,8 +24,9 @@ Como usar:
        ./ERI
 
 3. A primeira abertura demora de 10 a 30 segundos (o app se
-   descompacta). Uma janela de Terminal mostra o endereco — mantenha-a
-   aberta enquanto usa o programa. O navegador abre sozinho.
+   descompacta). O ERI abre em uma janela propria de aplicativo.
+   Se voce iniciou pelo Terminal, mantenha o Terminal aberto; para
+   encerrar, feche a janela do ERI.
 
 4. O arquivo demo_corpus.txt incluido e um corpus de exemplo no formato
    legado do Iramuteq (marcadores **** *variavel_valor) — use-o para

@@ -28,7 +28,7 @@ def main() -> None:
 
     sep = ";" if os.name == "nt" else ":"
     os.chdir(HERE)
-    run([
+    args = [
         "--noconfirm",
         "--clean",
         "--onefile",
@@ -36,8 +36,13 @@ def main() -> None:
         "--add-data", f"{UI}{sep}ui",
         "--collect-data", "simplemma",
         "--hidden-import", "app.main",
-        str(HERE / "desktop.py"),
-    ])
+        "--hidden-import", "webview",
+    ]
+    if os.name == "nt":
+        # Native pywebview window — suppress the console behind it.
+        args.append("--windowed")
+    args.append(str(HERE / "desktop.py"))
+    run(args)
     exe = HERE / "dist" / ("ERI.exe" if os.name == "nt" else "ERI")
     print(f"\nBuilt: {exe}")
 

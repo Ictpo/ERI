@@ -26,8 +26,16 @@ Other modes (both serve UI + API from ONE process on :8000):
   python stage serves it; volume `eri-data`).
 - Desktop binaries: `cd frontend; npm run build` then `backend/build_exe.py`
   (wrappers: `build_exe.ps1` Windows, `build_exe.sh` mac/linux) → `backend/dist/ERI(.exe)`.
-  PyInstaller onefile; free port, opens browser; data dir is per-OS
-  (%LOCALAPPDATA%\ERI | ~/Library/Application Support/ERI | ~/.local/share/ERI).
+  PyInstaller onefile, NATIVE WINDOW via pywebview (uvicorn on a daemon thread,
+  window on main thread; closing the window sets server.should_exit — no orphan
+  processes). Windows builds use --windowed (no console): sys.stdout/stderr are
+  None there, so desktop.py routes them to <data_dir>/eri.log — do not remove
+  that shim or uvicorn logging crashes the windowed exe. Env switches:
+  ERI_HEADLESS=1 (serve without window, used by CI smoke test) and
+  ERI_PORT_FILE=<path> (write chosen port; CI reads it — windowed exes have no
+  stdout to grep). Data dir per-OS (%LOCALAPPDATA%\ERI |
+  ~/Library/Application Support/ERI | ~/.local/share/ERI).
+  v1.2.0-browser tag = last browser-tab-based build (guaranteed fallback).
   PyInstaller CANNOT cross-compile — `.github/workflows/build.yml` builds
   win64 + macos-arm64 on tag push (`v*`) and publishes a GitHub Release
   (instruction files live in `packaging/`; smoke test boots the binary in CI).

@@ -1,7 +1,13 @@
-"""ERI desktop launcher: starts the bundled server and opens the browser.
+"""ERI desktop launcher: native window (pywebview) over a local FastAPI server.
 
 This is the PyInstaller entry point. It picks a free port, stores the
-database under %LOCALAPPDATA%\\ERI, launches uvicorn, and opens the UI.
+database under the per-OS app-data directory, starts uvicorn on a background
+thread, and opens the UI in a native desktop window. Closing the window
+shuts the server down and exits — no hidden processes remain.
+
+Environment switches (used by CI and debugging):
+  ERI_HEADLESS=1   run the server without a window (blocks until Ctrl+C)
+  ERI_PORT_FILE=p  write the chosen port number to file `p` once listening
 """
 from __future__ import annotations
 
@@ -9,7 +15,7 @@ import os
 import socket
 import sys
 import threading
-import webbrowser
+import time
 
 
 def _free_port() -> int:
@@ -30,34 +36,88 @@ def _data_dir() -> str:
     )
 
 
+def _ensure_streams(data_dir: str) -> None:
+    """In windowed (no-console) builds sys.stdout/stderr are None, which
+    crashes uvicorn's logging and swallows tracebacks. Route them to a
+    log file next to the database instead."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    log = open(
+        os.path.join(data_dir, "eri.log"),
+        "a",
+        buffering=1,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if sys.stdout is None:
+        sys.stdout = log
+    if sys.stderr is None:
+        sys.stderr = log
+
+
 def main() -> None:
     data_dir = _data_dir()
     os.makedirs(data_dir, exist_ok=True)
+    _ensure_streams(data_dir)
     os.environ.setdefault("IRAMUTEQ_DB", os.path.join(data_dir, "eri.db"))
 
     port = _free_port()
     url = f"http://127.0.0.1:{port}/"
 
-    print("=" * 56)
-    print("  ERI: Engine for Reinert Insights")
-    print(f"  Running at {url}")
-    print(f"  Data stored in {data_dir}")
-    print("  Keep this window open while you work.")
-    print("  Press Ctrl+C to quit.")
-    print("=" * 56, flush=True)
-
-    threading.Timer(1.5, lambda: webbrowser.open(url)).start()
-
     import uvicorn
 
     from app.main import app
 
-    try:
-        uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
-    except KeyboardInterrupt:
-        pass
+    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+    server = uvicorn.Server(config)
+
+    def _notify_port() -> None:
+        port_file = os.environ.get("ERI_PORT_FILE")
+        if port_file:
+            with open(port_file, "w", encoding="utf-8") as f:
+                f.write(str(port))
+
+    if os.environ.get("ERI_HEADLESS") == "1":
+        # CI / debug mode: no window, serve in the foreground.
+        threading.Timer(1.0, _notify_port).start()
+        print(f"ERI (headless) running at {url}", flush=True)
+        try:
+            server.run()
+        except KeyboardInterrupt:
+            pass
+        sys.exit(0)
+
+    # Native-window mode: server on a daemon thread, window on the main thread.
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    for _ in range(200):  # wait up to ~20 s for the server to come up
+        if server.started:
+            break
+        time.sleep(0.1)
+    _notify_port()
+
+    import webview
+
+    webview.create_window(
+        "ERI: Engine for Reinert Insights",
+        url,
+        width=1200,
+        height=800,
+        min_size=(900, 600),
+    )
+    webview.start()
+
+    # Window closed: shut the server down gracefully so nothing lingers.
+    server.should_exit = True
+    thread.join(timeout=5)
     sys.exit(0)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:  # noqa: BLE001 — last-resort crash log for windowed builds
+        import traceback
+
+        traceback.print_exc()
+        sys.exit(1)
