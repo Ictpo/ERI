@@ -5,8 +5,8 @@ import * as d3 from "d3";
 import { Download, List, BarChartHorizontal } from "lucide-react";
 import type { ChdClass, ChdNode, ChdResult } from "@/lib/types";
 import { categoryColor } from "@/lib/palette";
-import { downloadSvg } from "@/lib/export";
 import { cn, formatNumber } from "@/lib/utils";
+import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +37,7 @@ export function ChdView({ result }: { result: ChdResult }) {
   const [selectedClassId, setSelectedClassId] = React.useState<number | null>(
     result.classes[0]?.id ?? null
   );
+  const [exportOpen, setExportOpen] = React.useState(false);
   const svgRef = React.useRef<SVGSVGElement>(null);
 
   const classById = React.useMemo(() => {
@@ -148,14 +149,20 @@ export function ChdView({ result }: { result: ChdResult }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              svgRef.current && downloadSvg(svgRef.current, "chd-dendrogram")
-            }
+            onClick={() => setExportOpen(true)}
           >
-            <Download /> SVG
+            <Download /> Download
           </Button>
         </div>
       </div>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        filename="chd-dendrogram"
+        getSvg={() => svgRef.current}
+        version={`${result.classes.length}|${selectedClassId}`}
+      />
 
       {/* Dendrogram */}
       <Card>

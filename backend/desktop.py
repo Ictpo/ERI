@@ -98,6 +98,10 @@ def main() -> None:
 
     import webview
 
+    # pywebview silently blocks file downloads unless this is enabled —
+    # without it every SVG/PNG export button in the app does nothing.
+    webview.settings["ALLOW_DOWNLOADS"] = True
+
     webview.create_window(
         "ERI: Engine for Reinert Insights",
         url,

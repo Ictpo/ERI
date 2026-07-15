@@ -5,8 +5,8 @@ import * as d3 from "d3";
 import { Download, Maximize2, RotateCw, X } from "lucide-react";
 import type { SimilarityEdge, SimilarityResult } from "@/lib/types";
 import { categoryColor } from "@/lib/palette";
-import { downloadSvg } from "@/lib/export";
 import { formatNumber } from "@/lib/utils";
+import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -203,6 +203,8 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
   const [selectedNode, setSelectedNode] = React.useState<string | null>(null);
   const [hoveredNode, setHoveredNode] = React.useState<string | null>(null);
   const [layoutSeed, setLayoutSeed] = React.useState(1);
+  const [exportOpen, setExportOpen] = React.useState(false);
+  const [spread, setSpread] = React.useState(1);
 
   const freqDomain = React.useMemo(() => {
     const freqs = result.nodes.map((n) => n.freq);
@@ -248,7 +250,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
   }, [result.edges, metric]);
 
   // Synchronous force layout (recomputed on filter/metric/seed changes).
-  const laidNodes = React.useMemo(
+  const rawLaidNodes = React.useMemo(
     () =>
       computeLayout(
         visible.nodes,
@@ -263,6 +265,21 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
       ),
     [visible, metric, maxFreq, maxWeight, layoutSeed]
   );
+
+  // Word-spacing control: scale positions away from the centroid while
+  // font sizes stay constant, so labels get room without re-layout.
+  const laidNodes = React.useMemo(() => {
+    if (spread === 1 || rawLaidNodes.length === 0) return rawLaidNodes;
+    const cx =
+      rawLaidNodes.reduce((s, n) => s + n.x, 0) / rawLaidNodes.length;
+    const cy =
+      rawLaidNodes.reduce((s, n) => s + n.y, 0) / rawLaidNodes.length;
+    return rawLaidNodes.map((n) => ({
+      ...n,
+      x: cx + (n.x - cx) * spread,
+      y: cy + (n.y - cy) * spread,
+    }));
+  }, [rawLaidNodes, spread]);
 
   const nodeById = React.useMemo(
     () => new Map(laidNodes.map((n) => [n.id, n])),
@@ -362,12 +379,9 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
     return set;
   }, [hoveredNode, laidEdges]);
 
-  function exportSvg() {
+  function openExport() {
     setHoveredNode(null);
-    // Let React re-render without hover artifacts before serializing.
-    requestAnimationFrame(() => {
-      if (svgRef.current) downloadSvg(svgRef.current, "similarity-network");
-    });
+    setExportOpen(true);
   }
 
   const selectedEdges: (SimilarityEdge & { other: string })[] =
@@ -400,8 +414,8 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
           {visible.edges.length}/{result.edges.length} edges
         </Badge>
         <div className="ml-auto">
-          <Button variant="outline" size="sm" onClick={exportSvg}>
-            <Download /> SVG
+          <Button variant="outline" size="sm" onClick={openExport}>
+            <Download /> Download
           </Button>
         </div>
       </div>
@@ -500,7 +514,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               if (e.target === e.currentTarget) setSelectedNode(null);
             }}
           >
-            <g ref={zoomGroupRef}>
+            <g ref={zoomGroupRef} data-zoom-group="true">
               {/* Community contours */}
               {hulls.map((h) => (
                 <path
@@ -621,9 +635,32 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
       </div>
       <p className="text-xs text-slate-400">
         Scroll to zoom, drag to pan. Hover a word to highlight its
-        neighborhood; click it to list its strongest edges. Export is clean
-        vector SVG.
+        neighborhood; click it to list its strongest edges. Download opens a
+        preview with a spacing control (SVG or PNG).
       </p>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        filename="similarity-network"
+        getSvg={() => svgRef.current}
+        version={`${spread}|${metric}|${minFreq}|${minWeight}|${treeOnly}|${showCommunities}|${layoutSeed}`}
+        controls={
+          <div className="grid gap-2 sm:col-span-2">
+            <Label>
+              Word spacing:{" "}
+              <span className="tabular-nums">{spread.toFixed(2)}×</span>
+            </Label>
+            <Slider
+              min={1}
+              max={2.5}
+              step={0.25}
+              value={[spread]}
+              onValueChange={([v]) => setSpread(v)}
+            />
+          </div>
+        }
+      />
     </div>
   );
 }

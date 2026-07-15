@@ -4,10 +4,13 @@ import * as React from "react";
 import * as d3 from "d3";
 import { Download, Maximize } from "lucide-react";
 import type { AfcPoint, AfcResult } from "@/lib/types";
-import { downloadSvg } from "@/lib/export";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
+import { ExportDialog } from "./export-dialog";
 
 const WIDTH = 720;
 const HEIGHT = 520;
@@ -16,7 +19,7 @@ const MARGIN = { top: 24, right: 24, bottom: 40, left: 48 };
 type AxisPair = [number, number]; // 0-based axis indices
 
 const WORD_COLOR = "#64748b";
-const MODALITY_COLOR = "#4f46e5";
+const DEFAULT_MODALITY_COLOR = "#4f46e5";
 
 function axisValue(p: AfcPoint, axis: number): number | null {
   if (axis === 0) return p.x;
@@ -31,6 +34,85 @@ type Hover = {
   py: number;
 };
 
+type Placed = {
+  point: AfcPoint;
+  kind: "word" | "modality";
+  px: number;
+  py: number;
+};
+
+/** Markers + labels for a set of positioned points (shared by the live
+    plot and the offscreen export plot). */
+function PointNodes({
+  placed,
+  modalityColor,
+  onEnter,
+  onLeave,
+}: {
+  placed: Placed[];
+  modalityColor: string;
+  onEnter?: (h: Hover) => void;
+  onLeave?: () => void;
+}) {
+  return (
+    <>
+      {placed.map(({ point, kind, px, py }, i) => {
+        if (kind === "word") {
+          return (
+            <g key={`w${i}`}>
+              <circle
+                cx={px}
+                cy={py}
+                r={3}
+                fill={WORD_COLOR}
+                fillOpacity={0.7}
+                onMouseEnter={
+                  onEnter ? () => onEnter({ point, kind, px, py }) : undefined
+                }
+                onMouseLeave={onLeave}
+              />
+              <text
+                x={px + 5}
+                y={py + 3}
+                fontSize={9}
+                fill={WORD_COLOR}
+                fontFamily="Inter, system-ui, sans-serif"
+                pointerEvents="none"
+              >
+                {point.label.replace(/_+$/, "")}
+              </text>
+            </g>
+          );
+        }
+        const s = 5.5;
+        return (
+          <g key={`m${i}`}>
+            <path
+              d={`M${px},${py - s} L${px + s},${py} L${px},${py + s} L${px - s},${py} Z`}
+              fill={modalityColor}
+              onMouseEnter={
+                onEnter ? () => onEnter({ point, kind, px, py }) : undefined
+              }
+              onMouseLeave={onLeave}
+            />
+            <text
+              x={px + 8}
+              y={py + 4}
+              fontSize={11}
+              fontWeight={700}
+              fill={modalityColor}
+              fontFamily="Inter, system-ui, sans-serif"
+              pointerEvents="none"
+            >
+              {point.label}
+            </text>
+          </g>
+        );
+      })}
+    </>
+  );
+}
+
 export function AfcView({ result }: { result: AfcResult }) {
   const hasZ =
     result.explained.length >= 3 &&
@@ -41,8 +123,16 @@ export function AfcView({ result }: { result: AfcResult }) {
   const [showModalities, setShowModalities] = React.useState(true);
   const [hover, setHover] = React.useState<Hover | null>(null);
   const [transform, setTransform] = React.useState(d3.zoomIdentity);
+  // Export options (live modality color also benefits the on-screen plot).
+  const [exportOpen, setExportOpen] = React.useState(false);
+  const [spread, setSpread] = React.useState(1.5);
+  const [includeAxes, setIncludeAxes] = React.useState(false);
+  const [modalityColor, setModalityColor] = React.useState(
+    DEFAULT_MODALITY_COLOR
+  );
 
   const svgRef = React.useRef<SVGSVGElement>(null);
+  const exportRef = React.useRef<SVGSVGElement>(null);
   const zoomRef = React.useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(
     null
   );
@@ -56,8 +146,12 @@ export function AfcView({ result }: { result: AfcResult }) {
       if (vx === null || vy === null) return null;
       return { point: p, kind, vx, vy };
     };
-    const all: { point: AfcPoint; kind: "word" | "modality"; vx: number; vy: number }[] =
-      [];
+    const all: {
+      point: AfcPoint;
+      kind: "word" | "modality";
+      vx: number;
+      vy: number;
+    }[] = [];
     result.rows.forEach((p) => {
       const item = mk(p, "word");
       if (item) all.push(item);
@@ -68,6 +162,16 @@ export function AfcView({ result }: { result: AfcResult }) {
     });
     return all;
   }, [result, ax, ay]);
+
+  const visiblePoints = React.useMemo(
+    () =>
+      points.filter(
+        ({ kind }) =>
+          (kind !== "word" || showWords) &&
+          (kind !== "modality" || showModalities)
+      ),
+    [points, showWords, showModalities]
+  );
 
   const { xScale, yScale } = React.useMemo(() => {
     const xs = points.map((p) => p.vx);
@@ -88,7 +192,7 @@ export function AfcView({ result }: { result: AfcResult }) {
     };
   }, [points]);
 
-  // Attach d3.zoom to the svg.
+  // Attach d3.zoom to the on-screen svg.
   React.useEffect(() => {
     if (!svgRef.current) return;
     const svg = d3.select(svgRef.current);
@@ -114,6 +218,28 @@ export function AfcView({ result }: { result: AfcResult }) {
 
   const zx = transform.rescaleX(xScale);
   const zy = transform.rescaleY(yScale);
+
+  const livePlaced: Placed[] = visiblePoints.map(({ point, kind, vx, vy }) => ({
+    point,
+    kind,
+    px: zx(vx),
+    py: zy(vy),
+  }));
+
+  // Offscreen export plot: identity transform, spread-scaled canvas so
+  // labels get room without distorting the factor geometry.
+  const eW = Math.round(WIDTH * spread);
+  const eH = Math.round(HEIGHT * spread);
+  const exScale = xScale.copy().range([MARGIN.left, eW - MARGIN.right]);
+  const eyScale = yScale.copy().range([eH - MARGIN.bottom, MARGIN.top]);
+  const exportPlaced: Placed[] = visiblePoints.map(
+    ({ point, kind, vx, vy }) => ({
+      point,
+      kind,
+      px: exScale(vx),
+      py: eyScale(vy),
+    })
+  );
 
   const explainedX = result.explained[ax]?.toFixed(1) ?? "?";
   const explainedY = result.explained[ay]?.toFixed(1) ?? "?";
@@ -178,11 +304,9 @@ export function AfcView({ result }: { result: AfcResult }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() =>
-              svgRef.current && downloadSvg(svgRef.current, "afc-scatter")
-            }
+            onClick={() => setExportOpen(true)}
           >
-            <Download /> SVG
+            <Download /> Download
           </Button>
         </div>
       </div>
@@ -197,45 +321,45 @@ export function AfcView({ result }: { result: AfcResult }) {
             aria-label="Correspondence analysis scatter plot"
           >
             {/* Axis lines through origin */}
-            <line
-              x1={MARGIN.left}
-              x2={WIDTH - MARGIN.right}
-              y1={zy(0)}
-              y2={zy(0)}
-              stroke="#e2e8f0"
-              strokeWidth={1}
-            />
-            <line
-              x1={zx(0)}
-              x2={zx(0)}
-              y1={MARGIN.top}
-              y2={HEIGHT - MARGIN.bottom}
-              stroke="#e2e8f0"
-              strokeWidth={1}
-            />
-
-            {/* Axis labels */}
-            <text
-              x={WIDTH - MARGIN.right}
-              y={HEIGHT - 12}
-              textAnchor="end"
-              fontSize={12}
-              fill="#64748b"
-              fontFamily="Inter, system-ui, sans-serif"
-            >
-              Axis {ax + 1} ({explainedX}%)
-            </text>
-            <text
-              x={16}
-              y={MARGIN.top}
-              fontSize={12}
-              fill="#64748b"
-              fontFamily="Inter, system-ui, sans-serif"
-              transform={`rotate(-90 16 ${MARGIN.top})`}
-              textAnchor="end"
-            >
-              Axis {ay + 1} ({explainedY}%)
-            </text>
+            <g data-axes="true">
+              <line
+                x1={MARGIN.left}
+                x2={WIDTH - MARGIN.right}
+                y1={zy(0)}
+                y2={zy(0)}
+                stroke="#e2e8f0"
+                strokeWidth={1}
+              />
+              <line
+                x1={zx(0)}
+                x2={zx(0)}
+                y1={MARGIN.top}
+                y2={HEIGHT - MARGIN.bottom}
+                stroke="#e2e8f0"
+                strokeWidth={1}
+              />
+              <text
+                x={WIDTH - MARGIN.right}
+                y={HEIGHT - 12}
+                textAnchor="end"
+                fontSize={12}
+                fill="#64748b"
+                fontFamily="Inter, system-ui, sans-serif"
+              >
+                Axis {ax + 1} ({explainedX}%)
+              </text>
+              <text
+                x={16}
+                y={MARGIN.top}
+                fontSize={12}
+                fill="#64748b"
+                fontFamily="Inter, system-ui, sans-serif"
+                transform={`rotate(-90 16 ${MARGIN.top})`}
+                textAnchor="end"
+              >
+                Axis {ay + 1} ({explainedY}%)
+              </text>
+            </g>
 
             {/* Points */}
             <g clipPath="url(#afc-clip)">
@@ -247,62 +371,12 @@ export function AfcView({ result }: { result: AfcResult }) {
                   height={HEIGHT - MARGIN.top - MARGIN.bottom}
                 />
               </clipPath>
-              {points.map(({ point, kind, vx, vy }, i) => {
-                if (kind === "word" && !showWords) return null;
-                if (kind === "modality" && !showModalities) return null;
-                const px = zx(vx);
-                const py = zy(vy);
-                const onEnter = () => setHover({ point, kind, px, py });
-                const onLeave = () => setHover(null);
-                if (kind === "word") {
-                  return (
-                    <g key={`w${i}`}>
-                      <circle
-                        cx={px}
-                        cy={py}
-                        r={3}
-                        fill={WORD_COLOR}
-                        fillOpacity={0.7}
-                        onMouseEnter={onEnter}
-                        onMouseLeave={onLeave}
-                      />
-                      <text
-                        x={px + 5}
-                        y={py + 3}
-                        fontSize={9}
-                        fill={WORD_COLOR}
-                        fontFamily="Inter, system-ui, sans-serif"
-                        pointerEvents="none"
-                      >
-                        {point.label.replace(/_+$/, "")}
-                      </text>
-                    </g>
-                  );
-                }
-                // modality: diamond marker with bolder label
-                const s = 5.5;
-                return (
-                  <g key={`m${i}`}>
-                    <path
-                      d={`M${px},${py - s} L${px + s},${py} L${px},${py + s} L${px - s},${py} Z`}
-                      fill={MODALITY_COLOR}
-                      onMouseEnter={onEnter}
-                      onMouseLeave={onLeave}
-                    />
-                    <text
-                      x={px + 8}
-                      y={py + 4}
-                      fontSize={11}
-                      fontWeight={700}
-                      fill={MODALITY_COLOR}
-                      fontFamily="Inter, system-ui, sans-serif"
-                      pointerEvents="none"
-                    >
-                      {point.label}
-                    </text>
-                  </g>
-                );
-              })}
+              <PointNodes
+                placed={livePlaced}
+                modalityColor={modalityColor}
+                onEnter={setHover}
+                onLeave={() => setHover(null)}
+              />
             </g>
           </svg>
 
@@ -339,8 +413,106 @@ export function AfcView({ result }: { result: AfcResult }) {
       </Card>
       <p className="text-xs text-slate-400">
         Scroll to zoom, drag to pan. Circles are words; diamonds are variable
-        modalities.
+        modalities. Download opens a preview with spacing and color controls.
       </p>
+
+      {/* Offscreen export plot: always full extent, spread-scaled. */}
+      <div
+        aria-hidden="true"
+        style={{ position: "fixed", left: -100000, top: 0 }}
+      >
+        <svg
+          ref={exportRef}
+          viewBox={`0 0 ${eW} ${eH}`}
+          width={eW}
+          height={eH}
+          role="presentation"
+        >
+          {includeAxes && (
+            <g>
+              <line
+                x1={MARGIN.left}
+                x2={eW - MARGIN.right}
+                y1={eyScale(0)}
+                y2={eyScale(0)}
+                stroke="#e2e8f0"
+                strokeWidth={1}
+              />
+              <line
+                x1={exScale(0)}
+                x2={exScale(0)}
+                y1={MARGIN.top}
+                y2={eH - MARGIN.bottom}
+                stroke="#e2e8f0"
+                strokeWidth={1}
+              />
+              <text
+                x={eW - MARGIN.right}
+                y={eH - 12}
+                textAnchor="end"
+                fontSize={12}
+                fill="#64748b"
+                fontFamily="Inter, system-ui, sans-serif"
+              >
+                Axis {ax + 1} ({explainedX}%)
+              </text>
+              <text
+                x={16}
+                y={MARGIN.top}
+                fontSize={12}
+                fill="#64748b"
+                fontFamily="Inter, system-ui, sans-serif"
+                transform={`rotate(-90 16 ${MARGIN.top})`}
+                textAnchor="end"
+              >
+                Axis {ay + 1} ({explainedY}%)
+              </text>
+            </g>
+          )}
+          <PointNodes placed={exportPlaced} modalityColor={modalityColor} />
+        </svg>
+      </div>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        filename="afc-scatter"
+        getSvg={() => exportRef.current}
+        version={`${spread}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}`}
+        controls={
+          <>
+            <div className="grid gap-2">
+              <Label>
+                Word spacing:{" "}
+                <span className="tabular-nums">{spread.toFixed(2)}×</span>
+              </Label>
+              <Slider
+                min={1}
+                max={3}
+                step={0.25}
+                value={[spread]}
+                onValueChange={([v]) => setSpread(v)}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <Switch checked={includeAxes} onCheckedChange={setIncludeAxes} />
+                Include axes (%)
+              </label>
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                Variable color
+                <input
+                  type="color"
+                  value={modalityColor}
+                  onChange={(e) => setModalityColor(e.target.value)}
+                  className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
+                  aria-label="Variable modality color"
+                />
+              </label>
+            </div>
+          </>
+        }
+      />
     </div>
   );
 }

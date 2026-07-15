@@ -4,7 +4,7 @@ import * as React from "react";
 import cloud from "d3-cloud";
 import { Download, Search } from "lucide-react";
 import { categoryColor } from "@/lib/palette";
-import { downloadSvg } from "@/lib/export";
+import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,6 +30,7 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
   const [filter, setFilter] = React.useState("");
   const [placed, setPlaced] = React.useState<PlacedWord[]>([]);
   const [computing, setComputing] = React.useState(false);
+  const [exportOpen, setExportOpen] = React.useState(false);
   const svgRef = React.useRef<SVGSVGElement>(null);
 
   const selection = React.useMemo(() => {
@@ -116,11 +117,19 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => svgRef.current && downloadSvg(svgRef.current, "word-cloud")}
+          onClick={() => setExportOpen(true)}
         >
-          <Download /> SVG
+          <Download /> Download
         </Button>
       </div>
+
+      <ExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        filename="word-cloud"
+        getSvg={() => svgRef.current}
+        version={`${maxWords}|${filter}|${placed.length}|${computing}`}
+      />
 
       <Card>
         <CardContent className="p-2">
