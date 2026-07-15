@@ -106,6 +106,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # Use the annotated tag message as the release notes when present.
+          # actions/checkout peels annotated tags to commits, so re-fetch the
+          # real tag object first (see actions/checkout#290).
+          git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}"
           git tag -l --format='%(contents)' "${{ github.ref_name }}" > notes.md
           if [ -s notes.md ]; then
             gh release create "${{ github.ref_name }}" *.zip \
