@@ -41,6 +41,9 @@ def main() -> None:
     if os.name == "nt":
         # Native pywebview window — suppress the console behind it.
         args.append("--windowed")
+        icon = HERE.parent / "packaging" / "eri.ico"
+        if icon.is_file():
+            args.extend(["--icon", str(icon)])
     args.append(str(HERE / "desktop.py"))
     run(args)
     exe = HERE / "dist" / ("ERI.exe" if os.name == "nt" else "ERI")

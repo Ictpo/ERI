@@ -42,22 +42,90 @@ type Placed = {
   /** Optional decluttered label anchor (defaults next to the marker). */
   lx?: number;
   ly?: number;
+  /** True once the label has been nudged away from its natural spot —
+      draw a leader line back to the marker so the two stay visually linked. */
+  displaced?: boolean;
 };
 
+const DISPLACED_EPS = 1.5; // px — below this, don't bother with a leader line
+
+type LabelBox = {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  baseline: number;
+  kind: "word" | "modality";
+  x0: number;
+  y0: number;
+};
+
+/** Separate overlapping boxes within `group`, holding `fixed` boxes still.
+    Movable boxes push apart 50/50; a movable box pushed against a fixed one
+    absorbs the whole nudge. Returns true if anything still overlapped. */
+function relax(
+  group: LabelBox[],
+  fixed: LabelBox[],
+  minGap: number,
+  clamp: (b: LabelBox) => void,
+  iterations: number
+) {
+  const all = [...group, ...fixed];
+  const movable = new Set(group);
+  for (let iter = 0; iter < iterations; iter++) {
+    let moved = false;
+    for (let i = 0; i < all.length; i++) {
+      for (let j = i + 1; j < all.length; j++) {
+        const a = all[i];
+        const b = all[j];
+        const aMov = movable.has(a);
+        const bMov = movable.has(b);
+        if (!aMov && !bMov) continue;
+        const ox =
+          Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) + minGap;
+        const oy =
+          Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) + minGap;
+        if (ox <= 0 || oy <= 0) continue;
+        const share = aMov && bMov ? 0.5 : 1;
+        const moveA = aMov ? share : 0;
+        const moveB = bMov ? share : 0;
+        moved = true;
+        if (ox < oy) {
+          let dir = a.x + a.w / 2 < b.x + b.w / 2 ? -1 : 1;
+          if (Math.abs(a.x + a.w / 2 - (b.x + b.w / 2)) < 0.5)
+            dir = (i + j) % 2 ? 1 : -1; // coincident centers: deterministic split
+          a.x += dir * ox * moveA;
+          b.x -= dir * ox * moveB;
+        } else {
+          let dir = a.y + a.h / 2 < b.y + b.h / 2 ? -1 : 1;
+          if (Math.abs(a.y + a.h / 2 - (b.y + b.h / 2)) < 0.5)
+            dir = (i + j) % 2 ? 1 : -1;
+          a.y += dir * oy * moveA;
+          b.y -= dir * oy * moveB;
+        }
+      }
+    }
+    for (const box of group) clamp(box);
+    if (!moved) return false;
+  }
+  return true;
+}
+
 /**
- * Resolve label overlaps with minimal movement: every label keeps its
- * natural spot unless it collides with another (within `minGap` px);
- * colliding labels are nudged apart along the axis of least overlap.
- * Words are mobile; variable modalities are heavily pinned and only
- * shift when modalities collide with each other. Markers never move.
+ * Resolve label overlaps with minimal movement, in two phases that match
+ * the requirement "variables are the most stable — they move only when they
+ * collide with each other; words move around them":
+ *   Phase 1 — settle variable-modality labels against each other only.
+ *   Phase 2 — freeze the modalities and flow the word labels around them.
+ * Markers never move; only the label text is repositioned.
  */
 function declutterLabels(
   items: { px: number; py: number; kind: "word" | "modality"; text: string }[],
   minGap: number,
   boundsW: number,
   boundsH: number
-): { lx: number; ly: number }[] {
-  const boxes = items.map((it) => {
+): { lx: number; ly: number; displaced: boolean }[] {
+  const boxes: LabelBox[] = items.map((it) => {
     const fs = it.kind === "word" ? 9 : 11;
     const offX = it.kind === "word" ? 5 : 8;
     const baseline = it.kind === "word" ? 3 : 4;
@@ -68,39 +136,34 @@ function declutterLabels(
       w: Math.max(8, it.text.length * fs * (it.kind === "word" ? 0.55 : 0.62)),
       h,
       baseline: h * 0.75,
-      mob: it.kind === "word" ? 1 : 0.08,
+      kind: it.kind,
+      x0: it.px + offX,
+      y0: it.py + baseline,
     };
   });
-  for (let iter = 0; iter < 250; iter++) {
-    let moved = false;
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const a = boxes[i];
-        const b = boxes[j];
-        const ox =
-          Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) + minGap;
-        const oy =
-          Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) + minGap;
-        if (ox <= 0 || oy <= 0) continue;
-        moved = true;
-        const total = a.mob + b.mob;
-        if (ox < oy) {
-          const dir = a.x + a.w / 2 < b.x + b.w / 2 ? -1 : 1;
-          a.x += (dir * ox * a.mob) / total;
-          b.x -= (dir * ox * b.mob) / total;
-        } else {
-          const dir = a.y + a.h / 2 < b.y + b.h / 2 ? -1 : 1;
-          a.y += (dir * oy * a.mob) / total;
-          b.y -= (dir * oy * b.mob) / total;
-        }
-      }
-    }
-    if (!moved) break;
-  }
-  return boxes.map((box) => ({
-    lx: Math.max(2, Math.min(boundsW - box.w - 2, box.x)),
-    ly: Math.max(10, Math.min(boundsH - 4, box.y + box.baseline)),
-  }));
+  const clampBox = (box: LabelBox) => {
+    box.x = Math.max(2, Math.min(boundsW - box.w - 2, box.x));
+    box.y = Math.max(
+      10 - box.baseline,
+      Math.min(boundsH - 4 - box.baseline, box.y)
+    );
+  };
+  const modalities = boxes.filter((b) => b.kind === "modality");
+  const words = boxes.filter((b) => b.kind === "word");
+
+  // Phase 1: modalities settle among themselves (nothing else moves).
+  relax(modalities, [], minGap, clampBox, 400);
+  // Phase 2: words flow around the now-fixed modalities and each other.
+  relax(words, modalities, minGap, clampBox, 1200);
+
+  return boxes.map((box) => {
+    const lx = box.x;
+    const ly = box.y + box.baseline;
+    const displaced =
+      Math.abs(lx - box.x0) > DISPLACED_EPS ||
+      Math.abs(ly - box.y0) > DISPLACED_EPS;
+    return { lx, ly, displaced };
+  });
 }
 
 /** Markers + labels for a set of positioned points (shared by the live
@@ -118,10 +181,24 @@ function PointNodes({
 }) {
   return (
     <>
-      {placed.map(({ point, kind, px, py }, i) => {
+      {placed.map(({ point, kind, px, py, lx, ly, displaced }, i) => {
+        const labelX = lx ?? px + (kind === "word" ? 5 : 8);
+        const labelY = ly ?? py + (kind === "word" ? 3 : 4);
+        const leader = displaced ? (
+          <line
+            x1={px}
+            y1={py}
+            x2={labelX}
+            y2={labelY - (kind === "word" ? 3 : 4)}
+            stroke={kind === "word" ? WORD_COLOR : modalityColor}
+            strokeWidth={0.6}
+            strokeOpacity={0.55}
+          />
+        ) : null;
         if (kind === "word") {
           return (
             <g key={`w${i}`}>
+              {leader}
               <circle
                 cx={px}
                 cy={py}
@@ -134,8 +211,8 @@ function PointNodes({
                 onMouseLeave={onLeave}
               />
               <text
-                x={placed[i].lx ?? px + 5}
-                y={placed[i].ly ?? py + 3}
+                x={labelX}
+                y={labelY}
                 fontSize={9}
                 fill={WORD_COLOR}
                 fontFamily="Inter, system-ui, sans-serif"
@@ -149,6 +226,7 @@ function PointNodes({
         const s = 5.5;
         return (
           <g key={`m${i}`}>
+            {leader}
             <path
               d={`M${px},${py - s} L${px + s},${py} L${px},${py + s} L${px - s},${py} Z`}
               fill={modalityColor}
@@ -315,7 +393,12 @@ export function AfcView({ result }: { result: AfcResult }) {
       eW,
       eH
     );
-    return base.map((p, i) => ({ ...p, lx: labels[i].lx, ly: labels[i].ly }));
+    return base.map((p, i) => ({
+      ...p,
+      lx: labels[i].lx,
+      ly: labels[i].ly,
+      displaced: labels[i].displaced,
+    }));
   }, [visiblePoints, xScale, yScale, minGap, eW, eH]);
 
   const explainedX = result.explained[ax]?.toFixed(1) ?? "?";
