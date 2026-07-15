@@ -39,7 +39,69 @@ type Placed = {
   kind: "word" | "modality";
   px: number;
   py: number;
+  /** Optional decluttered label anchor (defaults next to the marker). */
+  lx?: number;
+  ly?: number;
 };
+
+/**
+ * Resolve label overlaps with minimal movement: every label keeps its
+ * natural spot unless it collides with another (within `minGap` px);
+ * colliding labels are nudged apart along the axis of least overlap.
+ * Words are mobile; variable modalities are heavily pinned and only
+ * shift when modalities collide with each other. Markers never move.
+ */
+function declutterLabels(
+  items: { px: number; py: number; kind: "word" | "modality"; text: string }[],
+  minGap: number,
+  boundsW: number,
+  boundsH: number
+): { lx: number; ly: number }[] {
+  const boxes = items.map((it) => {
+    const fs = it.kind === "word" ? 9 : 11;
+    const offX = it.kind === "word" ? 5 : 8;
+    const baseline = it.kind === "word" ? 3 : 4;
+    const h = fs * 1.2;
+    return {
+      x: it.px + offX,
+      y: it.py + baseline - h * 0.75,
+      w: Math.max(8, it.text.length * fs * (it.kind === "word" ? 0.55 : 0.62)),
+      h,
+      baseline: h * 0.75,
+      mob: it.kind === "word" ? 1 : 0.08,
+    };
+  });
+  for (let iter = 0; iter < 250; iter++) {
+    let moved = false;
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const ox =
+          Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) + minGap;
+        const oy =
+          Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) + minGap;
+        if (ox <= 0 || oy <= 0) continue;
+        moved = true;
+        const total = a.mob + b.mob;
+        if (ox < oy) {
+          const dir = a.x + a.w / 2 < b.x + b.w / 2 ? -1 : 1;
+          a.x += (dir * ox * a.mob) / total;
+          b.x -= (dir * ox * b.mob) / total;
+        } else {
+          const dir = a.y + a.h / 2 < b.y + b.h / 2 ? -1 : 1;
+          a.y += (dir * oy * a.mob) / total;
+          b.y -= (dir * oy * b.mob) / total;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+  return boxes.map((box) => ({
+    lx: Math.max(2, Math.min(boundsW - box.w - 2, box.x)),
+    ly: Math.max(10, Math.min(boundsH - 4, box.y + box.baseline)),
+  }));
+}
 
 /** Markers + labels for a set of positioned points (shared by the live
     plot and the offscreen export plot). */
@@ -72,8 +134,8 @@ function PointNodes({
                 onMouseLeave={onLeave}
               />
               <text
-                x={px + 5}
-                y={py + 3}
+                x={placed[i].lx ?? px + 5}
+                y={placed[i].ly ?? py + 3}
                 fontSize={9}
                 fill={WORD_COLOR}
                 fontFamily="Inter, system-ui, sans-serif"
@@ -96,8 +158,8 @@ function PointNodes({
               onMouseLeave={onLeave}
             />
             <text
-              x={px + 8}
-              y={py + 4}
+              x={placed[i].lx ?? px + 8}
+              y={placed[i].ly ?? py + 4}
               fontSize={11}
               fontWeight={700}
               fill={modalityColor}
@@ -125,7 +187,7 @@ export function AfcView({ result }: { result: AfcResult }) {
   const [transform, setTransform] = React.useState(d3.zoomIdentity);
   // Export options (live modality color also benefits the on-screen plot).
   const [exportOpen, setExportOpen] = React.useState(false);
-  const [spread, setSpread] = React.useState(1.5);
+  const [minGap, setMinGap] = React.useState(2);
   const [includeAxes, setIncludeAxes] = React.useState(false);
   const [modalityColor, setModalityColor] = React.useState(
     DEFAULT_MODALITY_COLOR
@@ -226,20 +288,35 @@ export function AfcView({ result }: { result: AfcResult }) {
     py: zy(vy),
   }));
 
-  // Offscreen export plot: identity transform, spread-scaled canvas so
-  // labels get room without distorting the factor geometry.
-  const eW = Math.round(WIDTH * spread);
-  const eH = Math.round(HEIGHT * spread);
-  const exScale = xScale.copy().range([MARGIN.left, eW - MARGIN.right]);
-  const eyScale = yScale.copy().range([eH - MARGIN.bottom, MARGIN.top]);
-  const exportPlaced: Placed[] = visiblePoints.map(
-    ({ point, kind, vx, vy }) => ({
+  // Offscreen export plot: identity transform (never the zoom viewport),
+  // with label overlaps resolved by minimal nudging. Markers stay at their
+  // true factor positions; only label text moves, words first, modalities
+  // pinned unless they collide with each other.
+  const eW = WIDTH;
+  const eH = HEIGHT;
+  const exportPlaced: Placed[] = React.useMemo(() => {
+    const base = visiblePoints.map(({ point, kind, vx, vy }) => ({
       point,
       kind,
-      px: exScale(vx),
-      py: eyScale(vy),
-    })
-  );
+      px: xScale(vx),
+      py: yScale(vy),
+    }));
+    const labels = declutterLabels(
+      base.map((p) => ({
+        px: p.px,
+        py: p.py,
+        kind: p.kind,
+        text:
+          p.kind === "word"
+            ? p.point.label.replace(/_+$/, "")
+            : p.point.label,
+      })),
+      minGap,
+      eW,
+      eH
+    );
+    return base.map((p, i) => ({ ...p, lx: labels[i].lx, ly: labels[i].ly }));
+  }, [visiblePoints, xScale, yScale, minGap, eW, eH]);
 
   const explainedX = result.explained[ax]?.toFixed(1) ?? "?";
   const explainedY = result.explained[ay]?.toFixed(1) ?? "?";
@@ -433,14 +510,14 @@ export function AfcView({ result }: { result: AfcResult }) {
               <line
                 x1={MARGIN.left}
                 x2={eW - MARGIN.right}
-                y1={eyScale(0)}
-                y2={eyScale(0)}
+                y1={yScale(0)}
+                y2={yScale(0)}
                 stroke="#e2e8f0"
                 strokeWidth={1}
               />
               <line
-                x1={exScale(0)}
-                x2={exScale(0)}
+                x1={xScale(0)}
+                x2={xScale(0)}
                 y1={MARGIN.top}
                 y2={eH - MARGIN.bottom}
                 stroke="#e2e8f0"
@@ -478,20 +555,20 @@ export function AfcView({ result }: { result: AfcResult }) {
         onOpenChange={setExportOpen}
         filename="afc-scatter"
         getSvg={() => exportRef.current}
-        version={`${spread}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}`}
+        version={`${minGap}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}`}
         controls={
           <>
             <div className="grid gap-2">
               <Label>
-                Word spacing:{" "}
-                <span className="tabular-nums">{spread.toFixed(2)}×</span>
+                Minimum gap between words:{" "}
+                <span className="tabular-nums">{minGap}px</span>
               </Label>
               <Slider
-                min={1}
-                max={3}
-                step={0.25}
-                value={[spread]}
-                onValueChange={([v]) => setSpread(v)}
+                min={0}
+                max={12}
+                step={1}
+                value={[minGap]}
+                onValueChange={([v]) => setMinGap(v)}
               />
             </div>
             <div className="flex items-center justify-between gap-4">

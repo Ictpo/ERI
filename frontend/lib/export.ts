@@ -166,5 +166,9 @@ export function downloadBlob(blob: Blob, filename: string) {
   document.body.appendChild(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  // In the native (pywebview/WebView2) window the blob is only read AFTER
+  // the user finishes the Save As dialog — revoking after 1 s produced
+  // empty files whenever choosing a filename took longer than that.
+  // Keep the URL alive long enough for any save dialog.
+  setTimeout(() => URL.revokeObjectURL(url), 10 * 60 * 1000);
 }
