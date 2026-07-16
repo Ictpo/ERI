@@ -1,0 +1,89 @@
+{
+  "projectId": "bbe2cd52-b15d-45c0-bf09-e0dabd009c94",
+  "pkg": "frontend",
+  "globalName": "ERI",
+  "shape": "package",
+  "buildCmd": "npm run build && node ../.design-sync/prep-css.mjs",
+  "srcDir": "components/ui",
+  "tsconfig": "tsconfig.json",
+  "cssEntry": ".ds-styles.css",
+  "extraFonts": [
+    "../.design-sync/assets/inter.css"
+  ],
+  "componentSrcMap": {
+    "Alert": "components/ui/alert.tsx",
+    "Badge": "components/ui/badge.tsx",
+    "Button": "components/ui/button.tsx",
+    "Card": "components/ui/card.tsx",
+    "Dialog": "components/ui/dialog.tsx",
+    "Input": "components/ui/input.tsx",
+    "Label": "components/ui/label.tsx",
+    "Select": "components/ui/select.tsx",
+    "Skeleton": "components/ui/skeleton.tsx",
+    "Slider": "components/ui/slider.tsx",
+    "Switch": "components/ui/switch.tsx",
+    "Tabs": "components/ui/tabs.tsx",
+    "Textarea": "components/ui/textarea.tsx",
+    "Toast": "components/ui/toast.tsx",
+    "Tooltip": "components/ui/tooltip.tsx",
+    "AlertTitle": null,
+    "AlertDescription": null,
+    "CardHeader": null,
+    "CardFooter": null,
+    "CardTitle": null,
+    "CardDescription": null,
+    "CardContent": null,
+    "DialogPortal": null,
+    "DialogOverlay": null,
+    "DialogClose": null,
+    "DialogTrigger": null,
+    "DialogContent": null,
+    "DialogHeader": null,
+    "DialogFooter": null,
+    "DialogTitle": null,
+    "DialogDescription": null,
+    "SelectGroup": null,
+    "SelectValue": null,
+    "SelectTrigger": null,
+    "SelectContent": null,
+    "SelectLabel": null,
+    "SelectItem": null,
+    "SelectSeparator": null,
+    "SelectScrollUpButton": null,
+    "SelectScrollDownButton": null,
+    "TabsList": null,
+    "TabsTrigger": null,
+    "TabsContent": null,
+    "ToastProvider": null,
+    "ToastViewport": null,
+    "ToastTitle": null,
+    "ToastDescription": null,
+    "ToastClose": null,
+    "ToastAction": null,
+    "TooltipTrigger": null,
+    "TooltipContent": null,
+    "TooltipProvider": null,
+    "Toaster": null
+  },
+  "overrides": {
+    "Dialog": {
+      "cardMode": "single",
+      "primaryStory": "Confirm",
+      "viewport": "560x360"
+    },
+    "Tooltip": {
+      "cardMode": "single",
+      "primaryStory": "Default",
+      "viewport": "320x160"
+    },
+    "Select": {
+      "cardMode": "single",
+      "primaryStory": "Language",
+      "viewport": "320x300"
+    },
+    "Tabs": {
+      "cardMode": "column"
+    }
+  },
+  "readmeHeader": ".design-sync/conventions.md"
+}
