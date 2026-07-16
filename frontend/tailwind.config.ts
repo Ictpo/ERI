@@ -12,10 +12,31 @@ const config: Config = {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
       },
       colors: {
+        // ┌───────────────────────────────────────────────────────────────┐
+        // │ HEADS UP: `indigo-*` IS NOT INDIGO IN THIS APP.               │
+        // │ This block overrides Tailwind's built-in indigo scale with    │
+        // │ the Eri brand rose ramp, so every existing `indigo-*` class   │
+        // │ (~40 places) renders rose with zero component edits.          │
+        // │ Primary #D6266F / hover #A81A57. See BRANDING.md Step 1.      │
+        // │ Chart colors are NOT themed here — categorical data uses the  │
+        // │ colorblind-safe Okabe–Ito palette in lib/palette.ts.          │
+        // └───────────────────────────────────────────────────────────────┘
+        indigo: {
+          50: "#FCF0F6",
+          100: "#FBE0EE",
+          200: "#F6C6DD",
+          300: "#EF9EC3",
+          400: "#E76AA1",
+          500: "#E23B80", // focus rings
+          600: "#D6266F", // primary — buttons, active
+          700: "#A81A57", // hover
+          800: "#851445",
+          900: "#611033", // text on soft bg
+        },
         accent: {
-          DEFAULT: "#4f46e5", // indigo-600
-          hover: "#4338ca",
-          soft: "#eef2ff",
+          DEFAULT: "#D6266F",
+          hover: "#A81A57",
+          soft: "#FCF0F6",
         },
       },
       keyframes: {
