@@ -75,7 +75,8 @@ cd frontend && npm run build
 
 - `CONTRACT.md` — the API contract both halves are built against
 - `backend/` — FastAPI + NumPy/SciPy/pandas/NetworkX engine (no R);
-  `desktop.py` + `build_exe.ps1` produce the standalone `ERI.exe`
+  `desktop.py` + `build_exe.ps1` produce the standalone `ERI.exe`.
+  See [`backend/ANALYSIS.md`](backend/ANALYSIS.md) for how each analysis is computed.
 - `frontend/` — Next.js 14 workspace UI (static export) with D3 visualizations
 - `Dockerfile` / `docker-compose.yml` — single-container build
 - `CLAUDE.md` — architecture map, run scripts and conventions for future work
