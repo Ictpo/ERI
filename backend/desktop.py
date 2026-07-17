@@ -24,6 +24,23 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+def _splash(text: str | None = None, *, close: bool = False) -> None:
+    """Drive the PyInstaller splash screen shown while the onefile bundle
+    unpacks. Only exists inside a --splash build (Windows/Linux); a no-op
+    everywhere else, so never let it raise."""
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+    except Exception:
+        return
+    try:
+        if close:
+            pyi_splash.close()
+        elif text and pyi_splash.is_alive():
+            pyi_splash.update_text(text)
+    except Exception:
+        pass
+
+
 def _data_dir() -> str:
     home = os.path.expanduser("~")
     if os.name == "nt":
@@ -64,6 +81,10 @@ def main() -> None:
     port = _free_port()
     url = f"http://127.0.0.1:{port}/"
 
+    # Importing the analysis stack (numpy/scipy/sklearn) is the slow part of
+    # startup — tell the user something is happening.
+    _splash("Loading the analysis engine…")
+
     import uvicorn
 
     from app.main import app
@@ -79,6 +100,7 @@ def main() -> None:
 
     if os.environ.get("ERI_HEADLESS") == "1":
         # CI / debug mode: no window, serve in the foreground.
+        _splash(close=True)
         threading.Timer(1.0, _notify_port).start()
         print(f"ERI (headless) running at {url}", flush=True)
         try:
@@ -88,6 +110,7 @@ def main() -> None:
         sys.exit(0)
 
     # Native-window mode: server on a daemon thread, window on the main thread.
+    _splash("Starting the server…")
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     for _ in range(200):  # wait up to ~20 s for the server to come up
@@ -95,6 +118,7 @@ def main() -> None:
             break
         time.sleep(0.1)
     _notify_port()
+    _splash("Opening Eri…")
 
     import webview
 
@@ -102,14 +126,28 @@ def main() -> None:
     # without it every SVG/PNG export button in the app does nothing.
     webview.settings["ALLOW_DOWNLOADS"] = True
 
-    webview.create_window(
-        "ERI: Engine for Reinert Insights",
+    window = webview.create_window(
+        "Eri — Hear the pattern beneath the noise",
         url,
         width=1200,
         height=800,
         min_size=(900, 600),
     )
+
+    # Hand off from splash to window: close it when the window is actually
+    # shown, so there's never a gap with nothing on screen. The timer is a
+    # backstop — an orphaned splash would sit on top of the app forever.
+    def _close_splash(*_args: object) -> None:
+        _splash(close=True)
+
+    try:
+        window.events.shown += _close_splash
+    except Exception:
+        pass
+    threading.Timer(25.0, _close_splash).start()
+
     webview.start()
+    _splash(close=True)
 
     # Window closed: shut the server down gracefully so nothing lingers.
     server.should_exit = True

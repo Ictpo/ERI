@@ -44,6 +44,14 @@ def main() -> None:
         icon = HERE.parent / "packaging" / "eri.ico"
         if icon.is_file():
             args.extend(["--icon", str(icon)])
+        # Startup feedback: the onefile bundle takes 10-30 s to unpack with no
+        # visible sign it's working. PyInstaller's splash covers exactly that
+        # gap; desktop.py closes it once the window is up.
+        # NOTE: --splash is Windows/Linux only — PyInstaller does not support
+        # it on macOS, so Mac builds have no splash (see NOTES in CLAUDE.md).
+        splash = HERE.parent / "packaging" / "eri-splash.png"
+        if splash.is_file():
+            args.extend(["--splash", str(splash)])
     args.append(str(HERE / "desktop.py"))
     run(args)
     exe = HERE / "dist" / ("ERI.exe" if os.name == "nt" else "ERI")

@@ -28,13 +28,27 @@ const LANGS = [
   { value: "es", label: "Spanish" },
 ] as const;
 
+/**
+ * Plain-language line first, the jargon kept as a quiet tag beside it —
+ * the identity system's rule: "a plain-language line so nobody has to know
+ * the jargon first". The terms aren't hidden (researchers need them), they
+ * just stop being the entry price.
+ */
 const CARD_DESCRIPTIONS: Record<AnalysisType, string> = {
   stats:
-    "Token counts, form frequencies, hapax legomena and a word cloud of the corpus.",
-  chd: "Reinert descending hierarchical classification: cluster text segments into lexical classes.",
+    "Counts, form frequencies, the rarest words, and a word cloud of your corpus. A good first look.",
+  chd: "Clusters your text into families of words that keep showing up together — the heart of the method.",
   similarity:
-    "Co-occurrence network of the most frequent forms, with community detection.",
-  afc: "Correspondence analysis crossing lexical forms with a corpus variable.",
+    "A web of the words that appear together, with the strongest links and clusters brought forward.",
+  afc: "Crosses your words with a variable (age, role, group…) and places them on a map — closer means more alike.",
+};
+
+/** The jargon, demoted to a tag. */
+const CARD_TAGS: Record<AnalysisType, string> = {
+  stats: "Frequencies",
+  chd: "Lexical classes",
+  similarity: "Co-occurrence",
+  afc: "Positioning map",
 };
 
 type SharedState = {
@@ -260,7 +274,12 @@ export function AnalysisLauncher({
                     <Icon className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <CardTitle>{meta.label}</CardTitle>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <CardTitle>{meta.label}</CardTitle>
+                      <span className="rounded-full border border-slate-200 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-slate-500">
+                        {CARD_TAGS[type]}
+                      </span>
+                    </div>
                     <CardDescription className="mt-1">
                       {CARD_DESCRIPTIONS[type]}
                     </CardDescription>

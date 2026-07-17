@@ -12,7 +12,7 @@ import {
   PanelLeft,
   ScatterChart,
   Trash2,
-  TreeDeciduous,
+  Split,
 } from "lucide-react";
 import type { Analysis, AnalysisType, ProjectDetail } from "@/lib/types";
 import { cn, formatDate, formatNumber } from "@/lib/utils";
@@ -31,7 +31,7 @@ export const ANALYSIS_META: Record<
   { label: string; icon: React.ComponentType<{ className?: string }> }
 > = {
   stats: { label: "Text statistics", icon: BarChart3 },
-  chd: { label: "Reinert classification", icon: TreeDeciduous },
+  chd: { label: "Reinert classification", icon: Split },
   similarity: { label: "Similarity network", icon: Network },
   afc: { label: "Correspondence analysis", icon: ScatterChart },
 };
