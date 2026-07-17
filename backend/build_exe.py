@@ -36,6 +36,7 @@ def main() -> None:
         "--add-data", f"{UI}{sep}ui",
         "--collect-data", "simplemma",
         "--hidden-import", "app.main",
+        "--hidden-import", "app.splash",
         "--hidden-import", "webview",
     ]
     if os.name == "nt":

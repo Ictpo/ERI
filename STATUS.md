@@ -1,7 +1,22 @@
 # ERI: Engine for Reinert Insights — Project Status
 
-Last updated: 2026-07-09 (post-rebrand, post-packaging)
+Last updated: 2026-07-17 (identity polish: animated splash, obfuscated art, ERI caps)
 Repo: `C:\Users\vrpra\Desktop\iramuteq-web` (own git repo, `main` branch)
+
+## Recent changes (2026-07-17)
+
+- **Animated startup splash** — the pywebview window opens on an animated
+  "pounce" (`backend/app/splash.py`) and swaps to the app once the server is
+  healthy; a background worker does the slow import/boot. Gives macOS a splash
+  it never had. Static unpack splash (`packaging/eri-splash.png`) unchanged.
+- **Matrix binary-rain loader** — the in-app loader + splash rain now encode
+  the acronym in ASCII-binary (E / ER / ERI → 8/16/24-bit columns), fall at a
+  steady length-independent speed with bright heads + faded tails, and start
+  empty.
+- **Fox art obfuscated** — the painting is XOR-encoded to `eri-art.bin` and
+  decoded at runtime; the raw `eri-fox.jpg` is no longer in the repo.
+- **Image naming** — brand marks standardized to `eri-mark[-size]`.
+- **ERI all-caps** everywhere it's displayed (it's an acronym).
 
 ## What this is
 
@@ -34,9 +49,11 @@ is chosen at runtime).
 
 Run modes:
 1. **Desktop exe** — `backend/desktop.py` (PyInstaller entry): picks a free port, sets
-   the DB to `%LOCALAPPDATA%\ERI\eri.db`, starts uvicorn, auto-opens the browser.
-   Build: `frontend: npm run build`, then `backend: build_exe.ps1` → `backend/dist/ERI.exe`
-   (onefile, ~139 MB, ~10-30 s first-launch unpack, unsigned → SmartScreen warning).
+   the DB to `%LOCALAPPDATA%\ERI\eri.db`, opens a pywebview window on the animated
+   splash, starts uvicorn on a worker thread, and swaps the window to the app once
+   `/api/health` is up. Build: `frontend: npm run build`, then
+   `backend: python build_exe.py` → `backend/dist/ERI.exe` (onefile, ~54 MB compressed,
+   ~10-30 s first-launch unpack, unsigned → SmartScreen warning).
 2. **Docker** — single container (root `Dockerfile`: node build stage → python runtime;
    `docker compose up --build`, port 8000, volume `eri-data`). Per-service Dockerfiles
    were deleted. Still not actually built/tested in a session.

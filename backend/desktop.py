@@ -81,17 +81,6 @@ def main() -> None:
     port = _free_port()
     url = f"http://127.0.0.1:{port}/"
 
-    # Importing the analysis stack (numpy/scipy/sklearn) is the slow part of
-    # startup — tell the user something is happening.
-    _splash("Loading the analysis engine…")
-
-    import uvicorn
-
-    from app.main import app
-
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    server = uvicorn.Server(config)
-
     def _notify_port() -> None:
         port_file = os.environ.get("ERI_PORT_FILE")
         if port_file:
@@ -101,6 +90,12 @@ def main() -> None:
     if os.environ.get("ERI_HEADLESS") == "1":
         # CI / debug mode: no window, serve in the foreground.
         _splash(close=True)
+        import uvicorn
+
+        from app.main import app
+
+        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        server = uvicorn.Server(config)
         threading.Timer(1.0, _notify_port).start()
         print(f"ERI (headless) running at {url}", flush=True)
         try:
@@ -109,49 +104,66 @@ def main() -> None:
             pass
         sys.exit(0)
 
-    # Native-window mode: server on a daemon thread, window on the main thread.
-    _splash("Starting the server…")
-    thread = threading.Thread(target=server.run, daemon=True)
-    thread.start()
-    for _ in range(200):  # wait up to ~20 s for the server to come up
-        if server.started:
-            break
-        time.sleep(0.1)
-    _notify_port()
-    _splash("Opening Eri…")
-
+    # Native-window mode. The window opens immediately on the animated "pounce"
+    # splash (identity §09); a background worker does the slow work (importing
+    # numpy/scipy, starting the server) WHILE that animation plays, then swaps
+    # the window to the real app. This also gives macOS a startup animation,
+    # which the PyInstaller --splash (Windows/Linux only) can't.
     import webview
+
+    from app.splash import SPLASH_HTML
 
     # pywebview silently blocks file downloads unless this is enabled —
     # without it every SVG/PNG export button in the app does nothing.
     webview.settings["ALLOW_DOWNLOADS"] = True
 
     window = webview.create_window(
-        "Eri — Hear the pattern beneath the noise",
-        url,
+        "ERI — Hear the pattern beneath the noise",
+        html=SPLASH_HTML,
         width=1200,
         height=800,
         min_size=(900, 600),
     )
 
-    # Hand off from splash to window: close it when the window is actually
-    # shown, so there's never a gap with nothing on screen. The timer is a
-    # backstop — an orphaned splash would sit on top of the app forever.
-    def _close_splash(*_args: object) -> None:
+    state: dict[str, object] = {}
+
+    def _startup() -> None:
+        # Runs after the GUI loop is up, so the animated splash is already
+        # on screen. Close the PyInstaller unpack splash now that we have a
+        # window; then do the heavy lifting.
         _splash(close=True)
+        import uvicorn
 
-    try:
-        window.events.shown += _close_splash
-    except Exception:
-        pass
-    threading.Timer(25.0, _close_splash).start()
+        from app.main import app
 
-    webview.start()
-    _splash(close=True)
+        config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
+        server = uvicorn.Server(config)
+        state["server"] = server
+        thread = threading.Thread(target=server.run, daemon=True)
+        thread.start()
+        state["thread"] = thread
+        for _ in range(600):  # wait up to ~60 s for the server to come up
+            if server.started:
+                break
+            time.sleep(0.1)
+        _notify_port()
+        # Let the pounce breathe for a beat so it never just flickers past.
+        time.sleep(0.6)
+        try:
+            window.load_url(url)
+        except Exception:
+            pass
+
+    webview.start(_startup)
+    _splash(close=True)  # backstop if the window never showed
 
     # Window closed: shut the server down gracefully so nothing lingers.
-    server.should_exit = True
-    thread.join(timeout=5)
+    server = state.get("server")
+    if server is not None:
+        server.should_exit = True  # type: ignore[attr-defined]
+    thread = state.get("thread")
+    if thread is not None:
+        thread.join(timeout=5)  # type: ignore[union-attr]
     sys.exit(0)
 
 

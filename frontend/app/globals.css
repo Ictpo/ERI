@@ -22,8 +22,8 @@ body {
 
 /* Brand loader (BRANDING.md Step 5) — decorative; disabled in plain mode. */
 @keyframes eriFall {
-  from { transform: translateY(-130%); }
-  to { transform: translateY(130%); }
+  from { transform: translateY(-100%); }
+  to { transform: translateY(360px); }
 }
 @keyframes eriRing {
   to { transform: rotate(360deg); }

@@ -22,3 +22,6 @@ ds-bundle/
 .design-sync/node_modules
 frontend/.ds-styles.css
 .design-sync/assets/
+
+# Raw source artwork — shipped only as obfuscated eri-art.bin (see packaging/encode_art.py)
+/eri-fox.jpg

@@ -11,7 +11,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = Path(__file__).resolve().parent
-ICON = HERE / "brand" / "eri-icon-256.png"
+ICON = HERE / "brand" / "eri-mark-256.png"
 OUT = HERE / "eri-splash.png"
 
 W, H = 460, 260
@@ -42,7 +42,7 @@ def main() -> None:
     icon = Image.open(ICON).convert("RGBA").resize((104, 104), Image.LANCZOS)
     img.paste(icon, (40, 60), icon)
 
-    d.text((168, 74), "Eri", font=font(44, True), fill=TEXT)
+    d.text((168, 74), "ERI", font=font(44, True), fill=TEXT)
     d.text((170, 128), "Hear the pattern beneath the noise.",
            font=font(13), fill=MUTED)
     d.text((170, 152), "Starting…", font=font(13), fill=TEXT)

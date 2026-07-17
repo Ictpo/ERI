@@ -226,7 +226,7 @@ export function Sidebar({
         <div className="mt-2 flex items-center justify-between gap-2 px-1">
           <div className="flex items-center gap-1.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/eri-icon.png" alt="" className="h-4 w-4 rounded-full" />
+            <img src="/eri-mark.png" alt="" className="h-4 w-4 rounded-full" />
             <AboutEri />
           </div>
           <PlainModeToggle />

@@ -1,27 +1,39 @@
 "use client";
 
+import * as React from "react";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
+import { loadFoxArt } from "@/lib/fox-art";
 
 /**
  * The one place Erine's original painting appears — the credits.
- * Everything else in the app uses the derived round mark (eri-icon.png).
+ * The painting is decoded at runtime from the obfuscated /eri-art.bin (see
+ * lib/fox-art.ts); everything else uses the derived round mark (eri-mark.png).
  */
 export function AboutEri() {
+  const [foxUrl, setFoxUrl] = React.useState<string | null>(null);
+
+  // Decode the painting only when the dialog is first opened.
+  function handleOpen(open: boolean) {
+    if (open && !foxUrl) loadFoxArt().then(setFoxUrl).catch(() => {});
+  }
+
   return (
-    <Dialog>
+    <Dialog onOpenChange={handleOpen}>
       <DialogTrigger className="text-sm text-slate-500 transition-colors hover:text-indigo-600">
-        About Eri
+        About ERI
       </DialogTrigger>
       {/* overflow-hidden + p-0 lets the card fill the dialog edge-to-edge */}
       <DialogContent className="max-w-xl overflow-hidden border-0 bg-[#0C0709] p-0">
         <div className="grid grid-cols-[0.75fr_1.25fr]">
-          <div className="relative min-h-[230px]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/eri-fox.jpg"
-              alt="Fox painting by Erine Chen Bi Ting, the origin of Eri's identity"
-              className="h-full w-full object-cover"
-            />
+          <div className="relative min-h-[230px] bg-[#1a0d12]">
+            {foxUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={foxUrl}
+                alt="Fox painting by Erine Chen Bi Ting, the origin of ERI's identity"
+                className="h-full w-full object-cover"
+              />
+            )}
             <div
               className="absolute inset-0"
               style={{
@@ -32,13 +44,13 @@ export function AboutEri() {
           <div className="p-7">
             <div className="mb-3 flex items-center gap-2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/eri-icon.png" alt="" className="h-7 w-7 rounded-full" />
+              <img src="/eri-mark.png" alt="" className="h-7 w-7 rounded-full" />
               <span className="font-display text-xl font-semibold text-[#F3E9E4]">
-                About Eri
+                About ERI
               </span>
             </div>
             <p className="text-sm leading-relaxed text-[#C9B8B0]">
-              Eri is a friendlier successor to Iramuteq — text analysis anyone
+              ERI is a friendlier successor to Iramuteq — text analysis anyone
               can follow. Inspired by a dear friend, whose warmth shapes the
               identity; she also drew the fox.
             </p>
