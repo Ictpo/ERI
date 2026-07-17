@@ -19,3 +19,12 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-slate-400;
 }
+
+/* Brand loader (BRANDING.md Step 5) — decorative; disabled in plain mode. */
+@keyframes eriFall {
+  from { transform: translateY(-130%); }
+  to { transform: translateY(130%); }
+}
+@keyframes eriRing {
+  to { transform: rotate(360deg); }
+}

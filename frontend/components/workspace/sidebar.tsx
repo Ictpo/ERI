@@ -17,6 +17,7 @@ import {
 import type { Analysis, AnalysisType, ProjectDetail } from "@/lib/types";
 import { cn, formatDate, formatNumber } from "@/lib/utils";
 import { AboutEri } from "@/components/about-eri";
+import { PlainModeToggle } from "@/components/ui/plain-mode-toggle";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -222,10 +223,13 @@ export function Sidebar({
           <ChevronRight className="h-3 w-3" />
           Click an analysis to open its result
         </p>
-        <div className="mt-1 flex items-center gap-1.5 px-1">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/eri-icon.png" alt="" className="h-4 w-4 rounded-full" />
-          <AboutEri />
+        <div className="mt-2 flex items-center justify-between gap-2 px-1">
+          <div className="flex items-center gap-1.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/eri-icon.png" alt="" className="h-4 w-4 rounded-full" />
+            <AboutEri />
+          </div>
+          <PlainModeToggle />
         </div>
       </div>
     </aside>

@@ -2,7 +2,8 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
-import { FlaskConical, Loader2, RefreshCw, XCircle } from "lucide-react";
+import { FlaskConical, RefreshCw, XCircle } from "lucide-react";
+import { EriLoader } from "@/components/ui/eri-loader";
 import type {
   AfcResult,
   Analysis,
@@ -76,9 +77,11 @@ export function ResultsPane({
     const pct = Math.round(Math.min(1, Math.max(0, event?.progress ?? 0)) * 100);
     return (
       <div className="flex h-full min-h-[320px] flex-col items-center justify-center text-center">
-        <Loader2 className="mb-4 h-8 w-8 animate-spin text-indigo-600" />
-        <p className="font-medium text-slate-700">{meta.label} running…</p>
-        <p className="mt-1 text-sm text-slate-500">
+        {/* Decorative brand loader (plain mode swaps it for a plain spinner).
+            The stage/message/percentage below are functional progress
+            feedback and stay in BOTH modes. */}
+        <EriLoader label={`${meta.label} running…`} />
+        <p className="mt-4 text-sm text-slate-500">
           {event?.message || "Waiting for progress events…"}
         </p>
         <div className="mt-5 w-full max-w-sm">

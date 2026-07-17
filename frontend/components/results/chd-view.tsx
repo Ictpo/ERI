@@ -4,7 +4,7 @@ import * as React from "react";
 import * as d3 from "d3";
 import { Download, List, BarChartHorizontal } from "lucide-react";
 import type { ChdClass, ChdNode, ChdResult } from "@/lib/types";
-import { categoryColor } from "@/lib/palette";
+import { categoryColor, fillStroke, readableTextOn } from "@/lib/palette";
 import { cn, formatNumber } from "@/lib/utils";
 import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
@@ -217,6 +217,8 @@ export function ChdView({ result }: { result: ChdResult }) {
                     width={boxW}
                     height={HEADER_H}
                     fill={color}
+                    stroke={fillStroke(color)}
+                    strokeWidth={0.75}
                   />
                   {isSelected && (
                     <rect
@@ -236,7 +238,7 @@ export function ChdView({ result }: { result: ChdResult }) {
                     textAnchor="middle"
                     fontSize={12.5}
                     fontWeight={700}
-                    fill="#ffffff"
+                    fill={readableTextOn(color)}
                   >
                     {leaf.cls ? `Class ${leaf.cls.id}` : "Unclassified"}
                     {leaf.cls ? ` — ${leaf.cls.pct.toFixed(1)}%` : ""}
@@ -246,7 +248,7 @@ export function ChdView({ result }: { result: ChdResult }) {
                     y={baselineY + 30}
                     textAnchor="middle"
                     fontSize={10}
-                    fill="#ffffff"
+                    fill={readableTextOn(color)}
                     fillOpacity={0.92}
                   >
                     {formatNumber(leaf.size)} segments

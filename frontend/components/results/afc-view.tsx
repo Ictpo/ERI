@@ -5,6 +5,7 @@ import * as d3 from "d3";
 import { Download, Maximize } from "lucide-react";
 import type { AfcPoint, AfcResult } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { usePlainMode } from "@/lib/appearance";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -19,7 +20,22 @@ const MARGIN = { top: 24, right: 24, bottom: 40, left: 48 };
 type AxisPair = [number, number]; // 0-based axis indices
 
 const WORD_COLOR = "#64748b";
-const DEFAULT_MODALITY_COLOR = "#4f46e5";
+/**
+ * Variable-modality marker colour (BRANDING.md Step 3).
+ *
+ * This colour CARRIES MEANING (words vs variable modalities), so it was
+ * chosen on colour-vision evidence, not brand feel. Measured minimum CIE76
+ * dE against the slate word markers across protan/deutan/tritan simulation
+ * (Machado 2009):
+ *     brand rose  #D6266F -> 10.1  (protanopes see ~the same grey as words)
+ *     old indigo  #4f46e5 -> 20.2
+ *     rose-800    #851445 -> 26.4  <- chosen: on-brand AND the safest rose
+ *     black       #000000 -> 50.0  <- plain mode
+ * Shape (diamond vs circle) and label weight remain redundant channels, so
+ * colour is never the sole encoding either way.
+ */
+const DEFAULT_MODALITY_COLOR = "#851445";
+const PLAIN_MODALITY_COLOR = "#000000";
 
 function axisValue(p: AfcPoint, axis: number): number | null {
   if (axis === 0) return p.x;
@@ -267,9 +283,17 @@ export function AfcView({ result }: { result: AfcResult }) {
   const [exportOpen, setExportOpen] = React.useState(false);
   const [minGap, setMinGap] = React.useState(2);
   const [includeAxes, setIncludeAxes] = React.useState(false);
+  const { plain } = usePlainMode();
   const [modalityColor, setModalityColor] = React.useState(
     DEFAULT_MODALITY_COLOR
   );
+  // Follow the plain-mode default unless the user has picked a colour by hand.
+  const pickedColor = React.useRef(false);
+  React.useEffect(() => {
+    if (!pickedColor.current) {
+      setModalityColor(plain ? PLAIN_MODALITY_COLOR : DEFAULT_MODALITY_COLOR);
+    }
+  }, [plain]);
 
   const svgRef = React.useRef<SVGSVGElement>(null);
   const exportRef = React.useRef<SVGSVGElement>(null);
@@ -664,7 +688,10 @@ export function AfcView({ result }: { result: AfcResult }) {
                 <input
                   type="color"
                   value={modalityColor}
-                  onChange={(e) => setModalityColor(e.target.value)}
+                  onChange={(e) => {
+                    pickedColor.current = true;
+                    setModalityColor(e.target.value);
+                  }}
                   className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
                   aria-label="Variable modality color"
                 />

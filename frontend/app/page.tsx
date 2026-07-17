@@ -1,5 +1,7 @@
 import { ProjectList } from "@/components/projects/project-list";
 import { AboutEri } from "@/components/about-eri";
+import { PlainModeToggle } from "@/components/ui/plain-mode-toggle";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 export default function HomePage() {
   return (
@@ -16,7 +18,10 @@ export default function HomePage() {
               Hear the pattern beneath the noise.
             </p>
           </div>
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-5">
+            <TooltipProvider delayDuration={200}>
+              <PlainModeToggle />
+            </TooltipProvider>
             <AboutEri />
           </div>
         </div>

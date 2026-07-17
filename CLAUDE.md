@@ -184,6 +184,42 @@ Docker, and the exe (whose port is chosen at runtime). `main.py` mounts
   history), center (corpus builder / composer / analysis config), right
   (result tabs). Viz components are client-only (`dynamic(…, {ssr:false})`).
 
+## Academic rigor rules (READ BEFORE TOUCHING ANY CHART)
+
+ERI produces figures for real research. Branding must never be load-bearing
+for reading an analysis. Standing rules:
+
+- **Brand colour never encodes data.** Categorical encoding comes only from
+  the Okabe–Ito palette in `lib/palette.ts` (plain hex — deliberately NOT
+  Tailwind classes, so the `indigo`→rose override in `tailwind.config.ts`
+  cannot reach it). Keep it that way.
+- **Any colour that carries meaning must be justified with colour-vision
+  evidence, not brand feel.** Measured min CIE76 ΔE vs the slate word
+  markers across protan/deutan/tritan (Machado 2009 matrices):
+  `#D6266F` brand rose **10.1 — fails** (protanopes see the same grey as
+  words), `#4f46e5` old indigo 20.2, **`#851445` rose-800 26.4 — in use**,
+  `#000000` 50.0 (plain mode). BRANDING.md Step 3 asked for `#D6266F`; it
+  was rejected on this evidence and the brand ramp's 800 step used instead —
+  on-brand *and* better than what it replaced.
+- **Keep redundant channels.** AFC distinguishes words/modalities by shape
+  (circle vs diamond) and label weight as well as colour. Don't drop them.
+- **Text on a palette fill must use `readableTextOn()`** (`lib/palette.ts`).
+  Hardcoded white broke the `#F0E442` yellow class label (1.32:1 contrast).
+- **Plain mode** (`lib/appearance.tsx`, toggle in both headers,
+  localStorage-backed) strips decoration: brand loader → plain spinner, AFC
+  modality → black. It must never change a number, a position, or the
+  categorical palette. Progress bars/percentages are functional — keep them
+  in both modes.
+
+**Known rigor limitation (unfixed):** `categoryColor()` wraps with modulo 8,
+but CHD allows up to 12 classes and network communities are unbounded
+(`greedy_modularity_communities`) — a real corpus here already produced 7.
+Past 8 groups, two different classes/communities get the SAME colour. CHD
+mitigates this by printing "Class N" text; **the similarity network does not
+label communities, so >8 communities is genuinely ambiguous there.** Fixing
+it properly means capping categorical colour (~6–8) and using another
+channel, not inventing more hues.
+
 ## Visual/export conventions
 
 - Similarity = D3 SVG force layout, **text nodes** (not dots), max-spanning-tree
