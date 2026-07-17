@@ -184,6 +184,24 @@ Docker, and the exe (whose port is chosen at runtime). `main.py` mounts
   history), center (corpus builder / composer / analysis config), right
   (result tabs). Viz components are client-only (`dynamic(…, {ssr:false})`).
 
+## Branding: two Tailwind scales are overridden (they lie about their names)
+
+`frontend/tailwind.config.ts` overrides **both** built-in scales:
+- **`indigo-*` renders ROSE** (`#D6266F` primary) — the Eri brand colour.
+- **`slate-*` renders a WARM neutral ramp** (Paper `#FBF6F2` → Ink `#211619`) —
+  the identity calls for neutrals "warmed off the cold slate of stock UI".
+
+Every warm step is pinned to Tailwind slate's original **lightness (L\*)**, so
+pre-existing contrast decisions survive and only the hue moves. One deliberate
+deviation: the identity's Muted `#8C7A72` measures **3.81:1 on Paper — under
+the 4.5:1 AA floor**, and `slate-500` is used for body-secondary text
+everywhere, so `500` is `#7F6D65` (same hue, slate-500's lightness, 4.57:1).
+Accessibility beats an exact token match.
+
+`BRANDING.md` (the implementation guide) says to keep slate; the full identity
+doc says to warm it. The identity doc won — but **the two sources disagree, so
+check the identity doc, not just BRANDING.md**, before further brand work.
+
 ## Academic rigor rules (READ BEFORE TOUCHING ANY CHART)
 
 ERI produces figures for real research. Branding must never be load-bearing

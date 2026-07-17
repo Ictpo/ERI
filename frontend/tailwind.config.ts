@@ -36,6 +36,36 @@ const config: Config = {
           800: "#851445",
           900: "#611033", // text on soft bg
         },
+        // ┌───────────────────────────────────────────────────────────────┐
+        // │ `slate-*` IS NOT SLATE EITHER — it's the Eri warm neutral     │
+        // │ ramp. The identity system calls for neutrals "warmed off the  │
+        // │ cold slate of stock UI"; overriding the scale rewarms every   │
+        // │ existing slate-* class with no component edits.               │
+        // │                                                               │
+        // │ Every step is pinned to Tailwind slate's ORIGINAL lightness   │
+        // │ (L*), so all pre-existing contrast decisions survive — only   │
+        // │ the hue moves. 50/100/200/900 are the identity's published    │
+        // │ Paper/Surface/Border/Ink verbatim.                            │
+        // │                                                               │
+        // │ 500 deviates deliberately: the published Muted #8C7A72 is     │
+        // │ 3.81:1 on Paper — under the 4.5:1 AA floor, and slate-500 is  │
+        // │ used for body-secondary text all over the app. #7F6D65 is the │
+        // │ same hue at slate-500's lightness => 4.57:1. Accessibility    │
+        // │ wins over an exact token match.                               │
+        // └───────────────────────────────────────────────────────────────┘
+        slate: {
+          50: "#FBF6F2", // Paper    (identity)
+          100: "#F5ECE6", // Surface  (identity)
+          200: "#ECDFD6", // Border   (identity)
+          300: "#E3D0C8",
+          400: "#B79C91",
+          500: "#7F6D65", // Muted, darkened to hold AA (see above)
+          600: "#645047",
+          700: "#4C3D36",
+          800: "#312621",
+          900: "#211619", // Ink text (identity)
+          950: "#0C0709", // Ink black (identity) — dark base
+        },
         accent: {
           DEFAULT: "#D6266F",
           hover: "#A81A57",
