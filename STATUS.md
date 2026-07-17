@@ -8,11 +8,16 @@ Repo: `C:\Users\vrpra\Desktop\iramuteq-web` (own git repo, `main` branch)
 - **Animated startup splash** — the pywebview window opens on an animated
   "pounce" (`backend/app/splash.py`) and swaps to the app once the server is
   healthy; a background worker does the slow import/boot. Gives macOS a splash
-  it never had. Static unpack splash (`packaging/eri-splash.png`) unchanged.
+  it never had. **No** PyInstaller `--splash` static image — it was dropped as
+  out-of-place, so the onefile unpack phase shows nothing.
 - **Matrix binary-rain loader** — the in-app loader + splash rain now encode
   the acronym in ASCII-binary (E / ER / ERI → 8/16/24-bit columns), fall at a
   steady length-independent speed with bright heads + faded tails, and start
   empty.
+- **Native save bridge** — SVG/PNG/TXT exports now route through a pywebview
+  `js_api` (`SaveApi` in `backend/desktop.py`) that opens a typed Save dialog
+  and force-appends the extension, so a renamed file can't land formatless.
+  Falls back to the blob download in the browser/dev. See `frontend/lib/export.ts`.
 - **Fox art obfuscated** — the painting is XOR-encoded to `eri-art.bin` and
   decoded at runtime; the raw `eri-fox.jpg` is no longer in the repo.
 - **Image naming** — brand marks standardized to `eri-mark[-size]`.

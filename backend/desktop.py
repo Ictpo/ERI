@@ -24,23 +24,6 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _splash(text: str | None = None, *, close: bool = False) -> None:
-    """Drive the PyInstaller splash screen shown while the onefile bundle
-    unpacks. Only exists inside a --splash build (Windows/Linux); a no-op
-    everywhere else, so never let it raise."""
-    try:
-        import pyi_splash  # type: ignore[import-not-found]
-    except Exception:
-        return
-    try:
-        if close:
-            pyi_splash.close()
-        elif text and pyi_splash.is_alive():
-            pyi_splash.update_text(text)
-    except Exception:
-        pass
-
-
 def _data_dir() -> str:
     home = os.path.expanduser("~")
     if os.name == "nt":
@@ -72,6 +55,64 @@ def _ensure_streams(data_dir: str) -> None:
         sys.stderr = log
 
 
+class SaveApi:
+    """Native save bridge exposed to the page as ``window.pywebview.api``.
+
+    WebView2's own blob download uses an "All files" Save dialog, so if the
+    user retypes the name without an extension the file lands formatless.
+    Routing exports through here lets us present a typed Save dialog AND
+    re-append the correct extension if it's missing — the file can never be
+    saved without its type.
+    """
+
+    def _ask_path(self, name: str, file_types: tuple[str, ...]) -> str | None:
+        """Open the native Save dialog; return the chosen path or None.
+        Split out so the extension logic can be tested without a GUI.
+
+        The window is fetched live (never stored on this object): holding the
+        pywebview Window as an attribute makes pywebview try to serialize the
+        native window when it introspects the js_api, which recurses forever
+        through the WinForms/WebView2 COM objects."""
+        import webview
+
+        win = webview.active_window() or (webview.windows[0] if webview.windows else None)
+        if win is None:
+            return None
+        result = win.create_file_dialog(
+            webview.SAVE_DIALOG, save_filename=name, file_types=file_types
+        )
+        if not result:
+            return None
+        return result[0] if isinstance(result, (list, tuple)) else result
+
+    def save_file(self, name: str, data_b64: str, ext: str) -> bool:
+        import base64
+
+        ext = (ext or "").lstrip(".").lower()
+        try:
+            raw = base64.b64decode(data_b64)
+        except Exception:
+            return False
+        if ext and not name.lower().endswith("." + ext):
+            name = f"{name}.{ext}"
+        file_types = []
+        if ext:
+            file_types.append(f"{ext.upper()} file (*.{ext})")
+        file_types.append("All files (*.*)")
+
+        path = self._ask_path(name, tuple(file_types))
+        if not path:
+            return False  # user cancelled
+        if ext and not path.lower().endswith("." + ext):
+            path = f"{path}.{ext}"  # enforce the extension no matter what
+        try:
+            with open(path, "wb") as f:
+                f.write(raw)
+        except Exception:
+            return False
+        return True
+
+
 def main() -> None:
     data_dir = _data_dir()
     os.makedirs(data_dir, exist_ok=True)
@@ -89,7 +130,6 @@ def main() -> None:
 
     if os.environ.get("ERI_HEADLESS") == "1":
         # CI / debug mode: no window, serve in the foreground.
-        _splash(close=True)
         import uvicorn
 
         from app.main import app
@@ -107,8 +147,8 @@ def main() -> None:
     # Native-window mode. The window opens immediately on the animated "pounce"
     # splash (identity §09); a background worker does the slow work (importing
     # numpy/scipy, starting the server) WHILE that animation plays, then swaps
-    # the window to the real app. This also gives macOS a startup animation,
-    # which the PyInstaller --splash (Windows/Linux only) can't.
+    # the window to the real app. There is no PyInstaller unpack splash, so the
+    # first visible thing is always this animated window.
     import webview
 
     from app.splash import SPLASH_HTML
@@ -117,21 +157,22 @@ def main() -> None:
     # without it every SVG/PNG export button in the app does nothing.
     webview.settings["ALLOW_DOWNLOADS"] = True
 
+    save_api = SaveApi()
+
     window = webview.create_window(
         "ERI — Hear the pattern beneath the noise",
         html=SPLASH_HTML,
         width=1200,
         height=800,
         min_size=(900, 600),
+        js_api=save_api,
     )
 
     state: dict[str, object] = {}
 
     def _startup() -> None:
         # Runs after the GUI loop is up, so the animated splash is already
-        # on screen. Close the PyInstaller unpack splash now that we have a
-        # window; then do the heavy lifting.
-        _splash(close=True)
+        # on screen; do the heavy lifting behind it.
         import uvicorn
 
         from app.main import app
@@ -155,7 +196,6 @@ def main() -> None:
             pass
 
     webview.start(_startup)
-    _splash(close=True)  # backstop if the window never showed
 
     # Window closed: shut the server down gracefully so nothing lingers.
     server = state.get("server")

@@ -158,7 +158,45 @@ export function downloadDataUrl(dataUrl: string, filename: string) {
   a.remove();
 }
 
-export function downloadBlob(blob: Blob, filename: string) {
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const chunk = 0x8000; // avoid arg-count limits on String.fromCharCode
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const sub = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode.apply(null, sub as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
+type NativeSave = (name: string, dataB64: string, ext: string) => Promise<boolean>;
+
+/** The native save bridge, present only inside the desktop (pywebview) app. */
+function nativeSave(): NativeSave | null {
+  if (typeof window === "undefined") return null;
+  const api = (window as unknown as { pywebview?: { api?: { save_file?: NativeSave } } })
+    .pywebview?.api;
+  return api?.save_file ? api.save_file.bind(api) : null;
+}
+
+export async function downloadBlob(blob: Blob, filename: string) {
+  const dot = filename.lastIndexOf(".");
+  const ext = dot > 0 ? filename.slice(dot + 1) : "";
+
+  // Desktop app: route through the native Save dialog so the file type is
+  // enforced. The browser's blob download uses an "All files" dialog, so
+  // retyping the name (e.g. "X") drops the extension → a formatless file.
+  const save = nativeSave();
+  if (save && ext) {
+    try {
+      const b64 = arrayBufferToBase64(await blob.arrayBuffer());
+      await save(filename, b64, ext);
+      return;
+    } catch {
+      // fall through to the browser download
+    }
+  }
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
