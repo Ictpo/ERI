@@ -10,6 +10,9 @@ const config: Config = {
     extend: {
       fontFamily: {
         sans: ["var(--font-inter)", "system-ui", "sans-serif"],
+        // Display serif — wordmark + headings only; body/tables/controls
+        // stay on Inter (BRANDING.md Step 2).
+        display: ["var(--font-newsreader)", "Georgia", "serif"],
       },
       colors: {
         // ┌───────────────────────────────────────────────────────────────┐

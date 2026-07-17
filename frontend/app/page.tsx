@@ -1,22 +1,23 @@
 import { ProjectList } from "@/components/projects/project-list";
-import { ScatterChart } from "lucide-react";
+import { AboutEri } from "@/components/about-eri";
 
 export default function HomePage() {
   return (
     <main className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-5">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-indigo-600 text-white">
-            <ScatterChart className="h-5 w-5" />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/eri-icon.png" alt="Eri" className="h-10 w-10 rounded-lg" />
           <div>
-            <h1 className="text-lg font-semibold tracking-tight">
-              ERI: Engine for Reinert Insights
+            <h1 className="font-display text-lg font-semibold tracking-tight">
+              Eri
             </h1>
             <p className="text-sm text-slate-500">
-              Statistical text analysis in the browser — word statistics, Reinert
-              classification, similarity networks and correspondence analysis.
+              Hear the pattern beneath the noise.
             </p>
+          </div>
+          <div className="ml-auto">
+            <AboutEri />
           </div>
         </div>
       </header>

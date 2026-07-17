@@ -40,7 +40,10 @@ const DialogContent = React.forwardRef<
       {...props}
     >
       {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-slate-400 transition-colors hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      {/* focus-visible (not focus): Radix auto-focuses this on open, so a
+          plain focus: ring flashes a box on every dialog — including over
+          dark branded cards. Keyboard users still get the ring. */}
+      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm text-slate-400 transition-colors hover:text-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">
         <X className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>

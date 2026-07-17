@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Newsreader } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 
@@ -8,10 +8,21 @@ const inter = Inter({
   variable: "--font-inter",
 });
 
+// Display serif for the wordmark and headings (BRANDING.md Step 2).
+const newsreader = Newsreader({
+  subsets: ["latin"],
+  variable: "--font-newsreader",
+  style: ["normal", "italic"],
+});
+
 export const metadata: Metadata = {
-  title: "ERI: Engine for Reinert Insights",
+  title: "Eri — Hear the pattern beneath the noise",
   description:
-    "Statistical text analysis in the browser: word statistics, Reinert classification, similarity networks and correspondence analysis.",
+    "Statistical text analysis: word statistics, Reinert classification, similarity networks and correspondence analysis.",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export default function RootLayout({
@@ -21,7 +32,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.variable} font-sans`}>
+      <body className={`${inter.variable} ${newsreader.variable} font-sans`}>
         {children}
         <Toaster />
       </body>
