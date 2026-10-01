@@ -5,5 +5,5 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-.\.venv\Scripts\python.exe -m pip install --quiet pyinstaller
+.\.venv\Scripts\python.exe -m pip install --quiet -r requirements.txt
 .\.venv\Scripts\python.exe build_exe.py

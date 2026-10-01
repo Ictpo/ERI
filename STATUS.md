@@ -1,7 +1,33 @@
 # ERI: Engine for Reinert Insights — Project Status
 
-Last updated: 2026-07-17 (identity polish: animated splash, obfuscated art, ERI caps)
+Last updated: 2026-10-01 (court-of-code audit fixes: engine, desktop, docs)
 Repo: `C:\Users\vrpra\Desktop\iramuteq-web` (own git repo, `main` branch)
+
+## Recent changes (2026-09-25)
+
+- **READMEs describe ERI as a desktop app.** `README.md` still pitched the
+  pre-2.0 web version ("multi-user web reimplementation", "any number of
+  browsers", "opens the browser by itself", Docker as a main way to run). It now
+  leads with the native-window app, marks dev mode as development-only, and
+  labels Docker as never built or tested, matching `DOCS.md`.
+  `frontend/README.md` no longer calls the UI "browser-based", and its stale
+  `npm start` and standalone-Docker instructions are replaced with how the
+  static export feeds the exe.
+- **Credits dialog removed.** The "About ERI" window is gone; in its place a
+  plain "made by Victor R Prados" link (home header + sidebar footer) opens
+  LinkedIn. It is a plain `target="_blank"` link: pywebview opens new-window
+  requests in the system browser (`OPEN_EXTERNAL_LINKS_IN_BROWSER`, set
+  explicitly in `backend/desktop.py`).
+- **Full product name is back.** "ERI: Engine for Reinert Insights" is used in
+  the home header, the browser tab title and the native window title; the bare
+  acronym is now reserved for pinpointed spots (the fox mark, the splash
+  wordmark, the exe name).
+- **Dead art pipeline deleted:** `frontend/lib/fox-art.ts`,
+  `frontend/public/eri-art.bin` and `packaging/encode_art.py` are gone, since
+  nothing displays the painting any more. The derived fox mark
+  (`eri-mark.png`) is untouched and still carries the identity.
+- **New reference doc:** `DOCS.md` — what the app does, its visual identity and
+  how it works end to end.
 
 ## Recent changes (2026-07-17)
 
@@ -49,20 +75,17 @@ FastAPI mounts the exported `frontend/out` at `/` (`_ui_dir()` in
 `backend/app/main.py`: `ERI_UI_DIR` env → PyInstaller `_MEIPASS/ui` → repo-relative
 `frontend/out`). `frontend/lib/api.ts:getApiBase()` targets `localhost:8000` only when
 the page itself runs on port 3000 (dev); otherwise it calls the page's own origin —
-which is what makes the same static bundle work in dev, Docker, and the exe (whose port
-is chosen at runtime).
+which is what makes the same static bundle work in dev, the monolith, and the exe
+(whose port is chosen at runtime).
 
 Run modes:
 1. **Desktop exe** — `backend/desktop.py` (PyInstaller entry): picks a free port, sets
    the DB to `%LOCALAPPDATA%\ERI\eri.db`, opens a pywebview window on the animated
    splash, starts uvicorn on a worker thread, and swaps the window to the app once
-   `/api/health` is up. Build: `frontend: npm run build`, then
+   uvicorn reports it has started. Build: `frontend: npm run build`, then
    `backend: python build_exe.py` → `backend/dist/ERI.exe` (onefile, ~54 MB compressed,
    ~10-30 s first-launch unpack, unsigned → SmartScreen warning).
-2. **Docker** — single container (root `Dockerfile`: node build stage → python runtime;
-   `docker compose up --build`, port 8000, volume `eri-data`). Per-service Dockerfiles
-   were deleted. Still not actually built/tested in a session.
-3. **Dev** — uvicorn :8000 + `next dev` :3000 (hot reload) as before.
+2. **Dev** — uvicorn :8000 + `next dev` :3000 (hot reload) as before.
 
 ## Visualization overhaul (matches published Iramuteq figures)
 
@@ -145,11 +168,12 @@ from Windows. Intel Macs: build from source with `backend/build_exe.sh`.
 
 ## Known gaps / next steps
 
-- Docker single-container path written but **never built/run** (was true before, still
-  true — only the exe and dev paths are verified).
+- Docker support was removed (2026-10): it was never built or tested, and the desktop
+  app is the product.
 - Exe is unsigned (SmartScreen "run anyway" needed — documented in LEIA-ME.txt inside
-  the zip); onefile → slow first launch; console window stays open by design.
-- CORS still `*`; no auth; no CI; CRLF warnings (no `.gitattributes`).
+  the zip); onefile → slow first launch. Windows builds are `--windowed` (no console).
+- No auth (local single-user app); CORS admits only the dev UI origins; CRLF warnings
+  (no `.gitattributes`).
 - `release/` is gitignored (139 MB artifacts stay out of git); rebuild via
   `build_exe.ps1` + `Compress-Archive`.
 - AFC and stats views untouched this round (already fine); similarity PNG export was

@@ -48,6 +48,7 @@ serais serait seras serez seriez serions serons seront ses soi soient sois soit
 sommes son sont soyez soyons suis sur t ta te tes toi ton tu un une vos votre vous
 y étaient étais était étant étiez étions été étée étées étés êtes être aussi bien
 cela ça comme donc encore faire fait plus très tout tous toute toutes alors si
+jusqu lorsqu puisqu quoiqu
 """.split()),
     "es": frozenset("""
 a al algo algunas algunos ante antes como con contra cual cuando de del desde donde

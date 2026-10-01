@@ -31,6 +31,7 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          npm test
           npm run build
 
       - uses: actions/setup-python@v5
@@ -41,11 +42,26 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: pip install -r requirements.txt pyinstaller
+        run: pip install -r requirements.txt
+
+      - name: Run backend tests
+        working-directory: backend
+        run: python -m pytest tests -q
 
       - name: Build binary
         working-directory: backend
         run: python build_exe.py
+
+      - name: Self-test the frozen binary's window-path imports
+        shell: bash
+        working-directory: backend/dist
+        env:
+          ERI_SELFTEST: "1"
+        run: |
+          if [ -f ERI.exe ]; then BIN=./ERI.exe
+          elif [ -d ERI.app ]; then BIN=./ERI.app/Contents/MacOS/ERI
+          else BIN=./ERI; fi
+          "$BIN"
 
       - name: Smoke-test binary boots (headless)
         shell: bash
@@ -55,7 +71,10 @@ jobs:
           ERI_PORT_FILE: port.txt
         run: |
           rm -f port.txt
-          ./ERI* > boot.log 2>&1 &
+          if [ -f ERI.exe ]; then BIN=./ERI.exe
+          elif [ -d ERI.app ]; then BIN=./ERI.app/Contents/MacOS/ERI
+          else BIN=./ERI; fi
+          "$BIN" > boot.log 2>&1 &
           APP_PID=$!
           for i in $(seq 1 60); do
             sleep 2
@@ -81,7 +100,10 @@ jobs:
 
       - name: Package (macOS)
         if: runner.os == 'macOS'
-        run: zip -j ${{ matrix.artifact }}.zip backend/dist/ERI ${{ matrix.readme }} samples/demo_corpus.txt
+        run: |
+          # ditto keeps the .app bundle's symlinks and permissions (zip -j would flatten it)
+          ditto -c -k --keepParent backend/dist/ERI.app ${{ matrix.artifact }}.zip
+          zip -j ${{ matrix.artifact }}.zip ${{ matrix.readme }} samples/demo_corpus.txt
 
       - uses: actions/upload-artifact@v4
         with:

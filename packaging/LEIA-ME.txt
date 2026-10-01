@@ -6,8 +6,9 @@ Como usar (Windows):
 1. De um duplo clique em ERI.exe.
    - O Windows SmartScreen pode avisar que o app nao e assinado.
      Clique em "Mais informacoes" > "Executar assim mesmo".
-   - A primeira abertura demora de 10 a 30 segundos (o app se
-     descompacta na memoria). Aguarde: a janela do ERI abre sozinha.
+   - Cada abertura pode levar de 10 a 30 segundos: a cada inicio o
+     ERI se descompacta numa pasta temporaria (que o antivirus pode
+     examinar). Aguarde: a janela do ERI abre sozinha.
 
 2. O ERI abre em uma janela propria de aplicativo (nao precisa de
    navegador). Feche a janela para encerrar o programa por completo.

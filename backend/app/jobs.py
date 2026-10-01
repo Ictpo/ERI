@@ -80,6 +80,12 @@ class JobManager:
         if job is None:
             # Job not in memory (e.g. server restarted) — emit the DB state once.
             a = storage.get_analysis(aid, include_result=False)
+            if a and a["status"] not in ("done", "error"):
+                # No worker holds it, so it can never finish. Record it as
+                # interrupted and send that terminal event (CONTRACT.md: the
+                # stream closes after done/error), so the page cannot loop.
+                storage.update_analysis(aid, "error", error=storage.INTERRUPTED_ERROR)
+                a = storage.get_analysis(aid, include_result=False)
             state = {
                 "status": a["status"] if a else "error",
                 "progress": 1.0 if a and a["status"] == "done" else 0.0,

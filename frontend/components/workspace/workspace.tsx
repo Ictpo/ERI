@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { api } from "@/lib/api";
+import Link from "next/link";
+import { api, ApiError } from "@/lib/api";
 import type {
   Analysis,
   AnalysisEvent,
@@ -14,22 +15,26 @@ import { toast } from "@/components/ui/use-toast";
 import { Sidebar } from "./sidebar";
 import { CorpusBuilder } from "./corpus-builder";
 import { CorpusComposer } from "./corpus-composer";
+import { ConfirmDialog } from "./confirm-dialog";
 import { AnalysisLauncher } from "./analysis-launcher";
 import { ResultsPane } from "./results-pane";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { ListPlus, RefreshCw, Upload } from "lucide-react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export type ProgressMap = Record<string, AnalysisEvent>;
 
+// Reconnects allowed after a progress stream drops without a final event.
+const MAX_STREAM_RETRIES = 5;
+
 export function Workspace({ projectId }: { projectId: string }) {
   const [project, setProject] = React.useState<ProjectDetail | null>(null);
   const [analyses, setAnalyses] = React.useState<Analysis[]>([]);
-  const [loadState, setLoadState] = React.useState<"loading" | "error" | "ready">(
-    "loading"
-  );
+  const [loadState, setLoadState] = React.useState<
+    "loading" | "error" | "missing" | "ready"
+  >("loading");
   const [openAnalysisId, setOpenAnalysisId] = React.useState<string | null>(null);
   const [progress, setProgress] = React.useState<ProgressMap>({});
   // null = default view (launcher if corpus, chooser if not);
@@ -37,7 +42,13 @@ export function Workspace({ projectId }: { projectId: string }) {
   const [builderMode, setBuilderMode] = React.useState<
     "choose" | "upload" | "compose" | null
   >(null);
+  // True while the corpus builder/composer holds unsaved work.
+  const [unsavedWork, setUnsavedWork] = React.useState(false);
+  // Analysis awaiting delete confirmation.
+  const [pendingDelete, setPendingDelete] = React.useState<string | null>(null);
   const sourcesRef = React.useRef<Map<string, EventSource>>(new Map());
+  // Dropped streams per analysis, to cap reconnects (see onerror below).
+  const dropsRef = React.useRef<Map<string, number>>(new Map());
 
   const load = React.useCallback(async () => {
     setLoadState("loading");
@@ -50,7 +61,10 @@ export function Workspace({ projectId }: { projectId: string }) {
       setAnalyses(hist);
       setLoadState("ready");
     } catch (err) {
-      setLoadState("error");
+      // A 404 means the project is gone (deleted), not that ERI is broken.
+      setLoadState(
+        err instanceof ApiError && err.status === 404 ? "missing" : "error"
+      );
       toastError(err, "Could not load project");
     }
   }, [projectId]);
@@ -68,15 +82,43 @@ export function Workspace({ projectId }: { projectId: string }) {
     };
   }, []);
 
-  const refreshAnalysis = React.useCallback(async (analysisId: string) => {
-    try {
-      const full = await api.getAnalysis(analysisId);
-      setAnalyses((prev) => prev.map((a) => (a.id === full.id ? full : a)));
-      return full;
-    } catch (err) {
-      toastError(err, "Could not fetch analysis result");
-      return null;
-    }
+  // One result request per analysis at a time: the "done" event and the
+  // open-result effect both ask for the same result.
+  const inflightRef = React.useRef<Map<string, Promise<Analysis | null>>>(
+    new Map()
+  );
+  // Analyses whose last result fetch failed. Any other finished analysis
+  // without a result is still loading.
+  const [failedFetches, setFailedFetches] = React.useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+
+  const refreshAnalysis = React.useCallback((analysisId: string) => {
+    const pending = inflightRef.current.get(analysisId);
+    if (pending) return pending;
+    const markFailed = (failed: boolean) =>
+      setFailedFetches((prev) => {
+        if (prev.has(analysisId) === failed) return prev;
+        const next = new Set(prev);
+        if (failed) next.add(analysisId);
+        else next.delete(analysisId);
+        return next;
+      });
+    markFailed(false);
+    const request = api
+      .getAnalysis(analysisId)
+      .then((full) => {
+        setAnalyses((prev) => prev.map((a) => (a.id === full.id ? full : a)));
+        return full as Analysis | null;
+      })
+      .catch((err) => {
+        markFailed(true);
+        toastError(err, "Could not fetch analysis result");
+        return null;
+      })
+      .finally(() => inflightRef.current.delete(analysisId));
+    inflightRef.current.set(analysisId, request);
+    return request;
   }, []);
 
   const subscribe = React.useCallback(
@@ -129,9 +171,14 @@ export function Workspace({ projectId }: { projectId: string }) {
       };
 
       es.onerror = () => {
-        // Stream dropped: stop listening and poll once for the final state.
+        // Stream dropped without a final event: stop listening, then
+        // re-check the stored state after a growing pause. The resume effect
+        // reconnects only while the analysis is still in flight, at most
+        // MAX_STREAM_RETRIES times, so a stuck row can never spin a loop.
         closeStream();
-        refreshAnalysis(analysis.id);
+        const drops = (dropsRef.current.get(analysis.id) ?? 0) + 1;
+        dropsRef.current.set(analysis.id, drops);
+        window.setTimeout(() => refreshAnalysis(analysis.id), 1000 * drops);
       };
     },
     [refreshAnalysis]
@@ -140,18 +187,28 @@ export function Workspace({ projectId }: { projectId: string }) {
   // Resume progress streams for analyses still in flight after a reload.
   React.useEffect(() => {
     analyses
-      .filter((a) => a.status === "queued" || a.status === "running")
+      .filter(
+        (a) =>
+          (a.status === "queued" || a.status === "running") &&
+          (dropsRef.current.get(a.id) ?? 0) < MAX_STREAM_RETRIES
+      )
       .forEach((a) => subscribe(a));
   }, [analyses, subscribe]);
 
-  // History items arrive without their result payload — fetch it on open.
+  // History items arrive without their result payload — fetch it on open
+  // (not again after a failed fetch: the pane offers Retry for that).
   React.useEffect(() => {
     if (!openAnalysisId) return;
     const open = analyses.find((a) => a.id === openAnalysisId);
-    if (open && open.status === "done" && open.result === null) {
+    if (
+      open &&
+      open.status === "done" &&
+      open.result === null &&
+      !failedFetches.has(openAnalysisId)
+    ) {
       refreshAnalysis(openAnalysisId);
     }
-  }, [openAnalysisId, analyses, refreshAnalysis]);
+  }, [openAnalysisId, analyses, failedFetches, refreshAnalysis]);
 
   async function runAnalysis(type: AnalysisType, params: object) {
     try {
@@ -216,6 +273,22 @@ export function Workspace({ projectId }: { projectId: string }) {
     );
   }
 
+  if (loadState === "missing") {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-4 p-8 text-center">
+        <p className="text-lg font-medium text-slate-700">
+          This project no longer exists
+        </p>
+        <p className="max-w-sm text-sm text-slate-500">
+          It may have been deleted. Your other projects are on the project list.
+        </p>
+        <Link href="/" className={buttonVariants({ variant: "outline" })}>
+          Back to projects
+        </Link>
+      </div>
+    );
+  }
+
   if (loadState === "error" || !project) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-4 p-8 text-center">
@@ -223,8 +296,8 @@ export function Workspace({ projectId }: { projectId: string }) {
           Could not load this project
         </p>
         <p className="max-w-sm text-sm text-slate-500">
-          The server did not respond or the project does not exist. Check that
-          the backend is running, then retry.
+          ERI&apos;s analysis engine did not respond. Retry, and if that does
+          not help, close ERI and open it again.
         </p>
         <Button variant="outline" onClick={load}>
           <RefreshCw /> Retry
@@ -245,7 +318,8 @@ export function Workspace({ projectId }: { projectId: string }) {
           progress={progress}
           openAnalysisId={openAnalysisId}
           onOpenAnalysis={(id) => setOpenAnalysisId(id)}
-          onDeleteAnalysis={deleteAnalysis}
+          onDeleteAnalysis={setPendingDelete}
+          confirmLeave={unsavedWork}
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
           {/* CENTER: configuration */}
@@ -253,6 +327,7 @@ export function Workspace({ projectId }: { projectId: string }) {
             {hasCorpus && project.corpus_summary ? (
               <AnalysisLauncher
                 corpusSummary={project.corpus_summary}
+                history={analyses}
                 onRun={runAnalysis}
                 onReplaceCorpus={() => setBuilderMode("choose")}
               />
@@ -262,6 +337,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 hasExistingCorpus={project.corpus_summary !== null}
                 onSaved={handleCorpusSaved}
                 onCancel={() => setBuilderMode(null)}
+                onDirtyChange={setUnsavedWork}
               />
             ) : builderMode === "compose" ? (
               <CorpusComposer
@@ -269,6 +345,7 @@ export function Workspace({ projectId }: { projectId: string }) {
                 hasExistingCorpus={project.corpus_summary !== null}
                 onSaved={handleCorpusSaved}
                 onCancel={() => setBuilderMode(null)}
+                onDirtyChange={setUnsavedWork}
               />
             ) : (
               <CorpusModeChooser
@@ -287,6 +364,10 @@ export function Workspace({ projectId }: { projectId: string }) {
             <ResultsPane
               analysis={openAnalysis}
               event={openAnalysis ? progress[openAnalysis.id] : undefined}
+              corpus={project.corpus_summary}
+              resultFailed={
+                openAnalysis ? failedFetches.has(openAnalysis.id) : false
+              }
               onRetryFetch={
                 openAnalysis ? () => refreshAnalysis(openAnalysis.id) : undefined
               }
@@ -294,6 +375,17 @@ export function Workspace({ projectId }: { projectId: string }) {
           </section>
         </div>
       </div>
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete this analysis?"
+        description="Its result will be removed from the project. This cannot be undone."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDelete) deleteAnalysis(pendingDelete);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </TooltipProvider>
   );
 }

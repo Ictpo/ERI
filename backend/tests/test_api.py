@@ -43,6 +43,7 @@ def test_full_flow():
     summary = client.put(f"/api/projects/{pid}/corpus", json={"documents": docs}).json()
     assert summary["n_documents"] == 12
     assert summary["variables"][0]["name"] == "theme"
+    assert summary["saved_at"]  # lets the UI flag analyses of an earlier corpus
 
     # run every analysis type through the async pipeline
     for atype, params in [
@@ -66,7 +67,7 @@ def test_full_flow():
             body += chunk
             if '"status"' in body:
                 break
-        assert '"done"' in body or '"running"' in body
+        assert '"done"' in body  # finished analysis: the first event is terminal
 
 
 def test_error_envelope_shape():
@@ -75,6 +76,13 @@ def test_error_envelope_shape():
     err = r.json()["error"]
     assert set(err) == {"code", "message", "hint"}
     assert err["message"] and not err["message"].startswith("Traceback")
+
+
+def test_settings_persist_plain_mode():
+    assert client.get("/api/settings").json() == {"plain_mode": False}
+    r = client.put("/api/settings", json={"plain_mode": True})
+    assert r.json() == {"plain_mode": True}
+    assert client.get("/api/settings").json() == {"plain_mode": True}
 
 
 def test_afc_error_is_friendly():
@@ -86,3 +94,15 @@ def test_afc_error_is_friendly():
     a = _wait_done(r.json()["analysis"]["id"])
     assert a["status"] == "error"
     assert a["error"]["hint"]
+
+
+def test_cors_admits_only_the_dev_ui():
+    # The desktop app is same-origin; only `next dev` on :3000 is cross-origin.
+    # Any other site in the user's browser must not be able to read the API.
+    ok = client.get("/api/projects", headers={"Origin": "http://localhost:3000"})
+    assert ok.headers.get("access-control-allow-origin") == "http://localhost:3000"
+    evil = client.get("/api/projects", headers={"Origin": "https://evil.example"})
+    assert "access-control-allow-origin" not in evil.headers
+    pre = client.options("/api/projects/x", headers={
+        "Origin": "https://evil.example", "Access-Control-Request-Method": "DELETE"})
+    assert pre.status_code == 400

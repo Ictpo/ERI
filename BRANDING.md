@@ -1,10 +1,11 @@
 # Eri — Brand Implementation Guide
 
-> Hand this file to Claude Code. It re-skins the ERI app from its current indigo
-> theme to the "Eri" fox identity. Follow the standing workflow in `CLAUDE.md`
-> to verify and ship (edit → `tsc --noEmit` + `npm run build` → drive the real
-> UI → rebuild export/exe → commit/tag). **Do Step 1 first and ship it alone —
-> it's the biggest visual change at the lowest risk.**
+> **Historical record: every step below has shipped. Do not re-run them.**
+> This guide re-skinned ERI from indigo to the "Eri" fox identity. Several
+> steps shipped differently from what is written (see each "Shipped state"
+> note). The code, `DOCS.md` §3 (identity) and `DOCS.md` §4 (academic rigor
+> rules) are the source of truth; where this file disagrees with them, they
+> win.
 
 ## Identity summary
 
@@ -47,6 +48,11 @@ colors: {
 ```
 
 Slate neutrals and emerald/amber/red status colors stay unchanged.
+
+> **Shipped state:** slate did NOT stay unchanged. `tailwind.config.ts` also
+> overrides `slate-*` with the warm neutral ramp (Paper `#FBF6F2` → Ink
+> `#211619`, `500` darkened to `#7F6D65`). Do not revert it to stock slate;
+> see `DOCS.md` §3.
 
 ## Step 2 — Add the display serif
 
@@ -159,13 +165,23 @@ Render `<EriLoader />` in the loading branch of
 `components/workspace/results-pane.tsx` (replacing the `Loader2` + progress
 block, or alongside it).
 
-## Step 6 — "About ERI" custom window
+## Step 6 — "About ERI" custom window (REMOVED)
 
-> **Shipped state:** the fox painting is no longer a plain file in the repo.
-> It is XOR-obfuscated to `frontend/public/eri-art.bin` (build step:
-> `packaging/encode_art.py`) and decoded to a Blob URL at runtime, only when the
-> dialog opens (`frontend/lib/fox-art.ts`). The raw `eri-fox.jpg` stays out of
-> git. The snippet below shows the original plain-`<img>` shape.
+> **Shipped state:** this credits dialog no longer exists. It was cut as
+> over-prominent and replaced by a single "made by Victor R Prados" link
+> (`frontend/components/made-by.tsx`) in the home header and the workspace
+> sidebar footer, which opens LinkedIn. Consequence to know about: the fox
+> painting is no longer displayed anywhere, so `frontend/lib/fox-art.ts`,
+> `frontend/public/eri-art.bin` and `packaging/encode_art.py` were **deleted**,
+> and Erine's art credit is not shown in the app. The fox mark
+> (`eri-mark.png`), derived from her painting, remains the app's identity.
+> The section below is kept as the historical record of what the dialog was.
+
+> **Historical:** while the dialog existed, the painting was not a plain file
+> in the repo — it was XOR-obfuscated to `eri-art.bin` (`encode_art.py`) and
+> decoded to a Blob URL at runtime (`lib/fox-art.ts`). All three files are gone
+> now that nothing displays the painting. The raw `eri-fox.jpg` is still
+> gitignored so it can never be committed by accident.
 
 Reuses the existing `Dialog` so it's a styled branded card, not a rough box.
 New file `frontend/components/about-eri.tsx`:
@@ -222,9 +238,9 @@ function Credit({ label, name }: { label: string; name: string }) {
 ```
 
 Place `<AboutEri />` on the right side of the header in `app/page.tsx` and in
-the workspace header. The fox art ships obfuscated as `eri-art.bin` and is
-decoded at runtime (Step 6) — the plain snippet above predates that. The
-close "✕" and backdrop-dismiss come with `DialogContent` — no extra wiring.
+the workspace header. Both were removed with the dialog (Step 6); the credit
+is now a single "made by Victor R Prados" link
+(`frontend/components/made-by.tsx`).
 
 ---
 
@@ -247,8 +263,6 @@ Regenerate after changing the mark or the animation:
 ## Assets to place in `frontend/public/`
 
 - `eri-mark.png` — the round fox mark (use the 256 source, or 32/48 where small).
-- `eri-art.bin` — the About-window painting, XOR-obfuscated (see Step 6). The
-  raw `eri-fox.jpg` is intentionally **not** committed.
 - `favicon.ico`, `apple-touch-icon.png` — from the generated favicon set.
 
 ## Suggested commit sequence

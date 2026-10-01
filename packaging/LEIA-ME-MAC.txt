@@ -7,7 +7,8 @@ https://github.com/Ictpo/ERI
 
 Como usar:
 
-1. Descompacte o zip. Voce tera um arquivo chamado "ERI".
+1. Descompacte o zip. Voce tera o aplicativo "ERI" (ERI.app). Se quiser,
+   arraste-o para a pasta Aplicativos.
 
 2. Primeira abertura — o macOS bloqueia apps nao assinados baixados da
    internet (Gatekeeper). Duas opcoes:
@@ -18,15 +19,13 @@ Como usar:
      final e clique em "Abrir Mesmo Assim" ao lado do aviso sobre ERI.
 
    OPCAO B (Terminal — mais rapido):
-   - Abra o Terminal na pasta do arquivo e rode:
-       chmod +x ./ERI
-       xattr -d com.apple.quarantine ./ERI
-       ./ERI
+   - Abra o Terminal na pasta do aplicativo e rode:
+       xattr -dr com.apple.quarantine ./ERI.app
+       open ./ERI.app
 
-3. A primeira abertura demora de 10 a 30 segundos (o app se
-   descompacta). O ERI abre em uma janela propria de aplicativo.
-   Se voce iniciou pelo Terminal, mantenha o Terminal aberto; para
-   encerrar, feche a janela do ERI.
+3. A primeira abertura pode levar alguns segundos. O ERI abre em uma
+   janela propria de aplicativo, com icone no Dock. Para encerrar, feche
+   a janela do ERI (ou use Cmd+Q).
 
 4. O arquivo demo_corpus.txt incluido e um corpus de exemplo no formato
    legado do Iramuteq (marcadores **** *variavel_valor) — use-o para
@@ -37,4 +36,4 @@ Seus dados ficam salvos em:
   ~/Library/Application Support/ERI/eri.db
 entao voce pode atualizar o ERI sem perder projetos.
 
-Para encerrar: Ctrl+C na janela do Terminal (ou feche-a).
+Para encerrar: feche a janela do ERI (ou use Cmd+Q).

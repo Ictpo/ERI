@@ -3,7 +3,7 @@
 import * as React from "react";
 import cloud from "d3-cloud";
 import { Download, Search } from "lucide-react";
-import { categoryColor } from "@/lib/palette";
+import { PALETTE } from "@/lib/palette";
 import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,9 +24,15 @@ type PlacedWord = {
 
 const WIDTH = 760;
 const HEIGHT = 480;
+// Word-cloud colours encode nothing (they rotate by rank), so the palette's
+// light yellow (#F0E442, 1.32:1 on white) and its black are left out.
+const CLOUD_COLORS = PALETTE.filter((c) => c !== "#F0E442" && c !== "#000000");
 
 export function WordCloud({ words }: { words: CloudWord[] }) {
-  const [maxWords, setMaxWords] = React.useState(Math.min(80, words.length));
+  // The slider spans every word the analysis returned (the launcher's "Max
+  // cloud words", capped at 300 by the engine) and starts showing all of them.
+  const sliderMax = Math.max(10, Math.ceil(words.length / 5) * 5);
+  const [maxWords, setMaxWords] = React.useState(sliderMax);
   const [filter, setFilter] = React.useState("");
   const [placed, setPlaced] = React.useState<PlacedWord[]>([]);
   const [computing, setComputing] = React.useState(false);
@@ -79,7 +85,7 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
             x: w.x ?? 0,
             y: w.y ?? 0,
             rotate: w.rotate ?? 0,
-            color: categoryColor(i % 7), // skip pure black rotation-heavy look
+            color: CLOUD_COLORS[i % CLOUD_COLORS.length],
           }))
         );
         setComputing(false);
@@ -95,11 +101,14 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
       <div className="flex flex-wrap items-end gap-4">
         <div className="grid min-w-[200px] flex-1 gap-2">
           <Label>
-            Max words: <span className="tabular-nums">{maxWords}</span>
+            Max words:{" "}
+            <span className="tabular-nums">
+              {Math.min(maxWords, words.length)}
+            </span>
           </Label>
           <Slider
             min={10}
-            max={150}
+            max={sliderMax}
             step={5}
             value={[maxWords]}
             onValueChange={([v]) => setMaxWords(v)}

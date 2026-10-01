@@ -12,6 +12,8 @@ export type CorpusSummary = {
   n_tokens: number;
   n_forms: number;
   variables: { name: string; modalities: string[] }[];
+  /** When this corpus was saved (UTC ISO); absent for corpora saved earlier. */
+  saved_at?: string;
 };
 
 export type ProjectDetail = Project & { corpus_summary: CorpusSummary | null };
@@ -144,6 +146,7 @@ export type AfcPoint = {
   mass: number;
   contrib_x: number;
   contrib_y: number;
+  contrib_z: number | null; // null without a 3rd axis; absent in older results
   freq: number;
 };
 
@@ -152,5 +155,7 @@ export type AfcResult = {
   rows: AfcPoint[];
   cols: AfcPoint[];
 };
+
+export type Settings = { plain_mode: boolean };
 
 export type Health = { ok: true; version: string };

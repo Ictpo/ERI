@@ -8,6 +8,7 @@ shuts the server down and exits — no hidden processes remain.
 Environment switches (used by CI and debugging):
   ERI_HEADLESS=1   run the server without a window (blocks until Ctrl+C)
   ERI_PORT_FILE=p  write the chosen port number to file `p` once listening
+  ERI_SELFTEST=1   import everything the window path needs, then exit 0 (CI)
 """
 from __future__ import annotations
 
@@ -22,6 +23,22 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
+
+
+def _error_html(message: str, hint: str) -> str:
+    """Plain page shown in the window when startup fails, instead of an
+    endless splash or the webview's "can't reach this page"."""
+    import html
+
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'><title>ERI</title></head>"
+        "<body style=\"margin:0;height:100vh;display:flex;align-items:center;"
+        "justify-content:center;font-family:system-ui,sans-serif;background:#fff;color:#1e293b\">"
+        "<div style='max-width:32rem;padding:2rem'>"
+        f"<h1 style='font-size:1.25rem'>{html.escape(message)}</h1>"
+        f"<p style='color:#475569;line-height:1.5'>{html.escape(hint)}</p>"
+        "</div></body></html>"
+    )
 
 
 def _data_dir() -> str:
@@ -55,6 +72,11 @@ def _ensure_streams(data_dir: str) -> None:
         sys.stderr = log
 
 
+class SaveError(Exception):
+    """A save the user asked for failed. pywebview rejects the page's promise
+    with this class name, so export.ts can tell it from a cancel (False)."""
+
+
 class SaveApi:
     """Native save bridge exposed to the page as ``window.pywebview.api``.
 
@@ -79,7 +101,7 @@ class SaveApi:
         if win is None:
             return None
         result = win.create_file_dialog(
-            webview.SAVE_DIALOG, save_filename=name, file_types=file_types
+            webview.FileDialog.SAVE, save_filename=name, file_types=file_types
         )
         if not result:
             return None
@@ -108,8 +130,10 @@ class SaveApi:
         try:
             with open(path, "wb") as f:
                 f.write(raw)
-        except Exception:
-            return False
+        except OSError as exc:
+            # Not a cancel: tell the page, or the user would believe the
+            # figure was saved.
+            raise SaveError(f"Could not write {path}: {exc.strerror or exc}.") from exc
         return True
 
 
@@ -127,6 +151,20 @@ def main() -> None:
         if port_file:
             with open(port_file, "w", encoding="utf-8") as f:
                 f.write(str(port))
+
+    if os.environ.get("ERI_SELFTEST") == "1":
+        # CI: the headless smoke test never imports pywebview or the splash,
+        # so a frozen build missing them would still pass. Load exactly what
+        # the window path loads, then exit; any ImportError exits 1 (below).
+        import webview
+
+        from app.main import app  # noqa: F401
+        from app.splash import SPLASH_HTML
+
+        if not SPLASH_HTML or not hasattr(webview, "create_window"):
+            sys.exit(1)
+        print("ERI selftest OK", flush=True)
+        sys.exit(0)
 
     if os.environ.get("ERI_HEADLESS") == "1":
         # CI / debug mode: no window, serve in the foreground.
@@ -156,11 +194,15 @@ def main() -> None:
     # pywebview silently blocks file downloads unless this is enabled —
     # without it every SVG/PNG export button in the app does nothing.
     webview.settings["ALLOW_DOWNLOADS"] = True
+    # target="_blank" links (the "made by" credit) open in the system browser,
+    # never in this window. This is pywebview's default; pin it so the credit
+    # link can stay a plain <a> (frontend/components/made-by.tsx).
+    webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
 
     save_api = SaveApi()
 
     window = webview.create_window(
-        "ERI — Hear the pattern beneath the noise",
+        "ERI: Engine for Reinert Insights",
         html=SPLASH_HTML,
         width=1200,
         height=800,
@@ -173,9 +215,28 @@ def main() -> None:
     def _startup() -> None:
         # Runs after the GUI loop is up, so the animated splash is already
         # on screen; do the heavy lifting behind it.
-        import uvicorn
+        log = str(getattr(sys.stderr, "name", ""))
+        hint = "Close ERI and open it again. If this keeps happening, report it " + (
+            f"and attach the file {log}." if log.endswith("eri.log")
+            else "with the text shown in the Terminal window."
+        )
 
-        from app.main import app
+        def fail(message: str) -> None:
+            try:
+                window.load_html(_error_html(message, hint))
+            except Exception:
+                pass
+
+        try:
+            import uvicorn
+
+            from app.main import app
+        except Exception:  # noqa: BLE001 — logged, then shown to the user
+            import traceback
+
+            traceback.print_exc()
+            fail("ERI could not load its analysis engine.")
+            return
 
         config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
         server = uvicorn.Server(config)
@@ -184,9 +245,12 @@ def main() -> None:
         thread.start()
         state["thread"] = thread
         for _ in range(600):  # wait up to ~60 s for the server to come up
-            if server.started:
+            if server.started or not thread.is_alive():
                 break
             time.sleep(0.1)
+        if not server.started:
+            fail("ERI could not start its local server.")
+            return
         _notify_port()
         # Let the pounce breathe for a beat so it never just flickers past.
         time.sleep(0.6)
@@ -204,7 +268,17 @@ def main() -> None:
     thread = state.get("thread")
     if thread is not None:
         thread.join(timeout=5)  # type: ignore[union-attr]
-    sys.exit(0)
+    # Exit hard. sys.exit() waits for the analysis thread pool (its workers
+    # are joined at interpreter exit), so a running CHD would keep an
+    # invisible ERI process busy until it finished. Results are written in a
+    # single SQLite (WAL) transaction, so cutting a job off loses nothing
+    # already saved; the cut-off analysis is reported on the next launch.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:  # noqa: BLE001 — best effort before a hard exit
+            pass
+    os._exit(0)
 
 
 if __name__ == "__main__":

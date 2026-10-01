@@ -1,5 +1,5 @@
-"""SQLite persistence for projects, corpora and analyses (multi-user ready:
-all state is server-side; any number of browsers can work concurrently)."""
+"""SQLite persistence for projects, corpora and analyses: one local file,
+located by IRAMUTEQ_DB (the desktop app points it at the per-user data dir)."""
 from __future__ import annotations
 
 import json
@@ -47,6 +47,9 @@ def _create_tables(con: sqlite3.Connection) -> None:
             status TEXT NOT NULL, error TEXT, result TEXT,
             created_at TEXT NOT NULL, finished_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY, value TEXT NOT NULL
+        );
         """)
 
 
@@ -82,6 +85,23 @@ def delete_project(pid: str) -> None:
     with _connect() as con:
         con.execute("PRAGMA foreign_keys=ON")
         con.execute("DELETE FROM projects WHERE id=?", (pid,))
+
+
+# ---- settings (UI preferences that must survive a relaunch) ----
+
+def get_setting(key: str) -> str | None:
+    with _connect() as con:
+        r = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r["value"] if r else None
+
+
+def set_setting(key: str, value: str) -> None:
+    with _connect() as con:
+        con.execute(
+            "INSERT INTO settings (key, value) VALUES (?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
 
 
 # ---- corpus ----
@@ -127,6 +147,27 @@ def update_analysis(aid: str, status: str, error: dict | None = None, result: di
              json.dumps(result, ensure_ascii=False) if result else None,
              finished, aid),
         )
+
+
+INTERRUPTED_ERROR = {
+    "code": "interrupted",
+    "message": "This analysis was interrupted before it finished (ERI was closed or stopped).",
+    "hint": "Run it again from the analysis launcher.",
+}
+
+
+def fail_interrupted_analyses() -> int:
+    """Mark analyses left queued/running by a stopped ERI as failed.
+
+    Jobs live only in the process that started them, so at startup any such
+    row can never finish. Returns how many rows were closed out."""
+    with _connect() as con:
+        cur = con.execute(
+            "UPDATE analyses SET status='error', error=?, finished_at=? "
+            "WHERE status IN ('queued', 'running')",
+            (json.dumps(INTERRUPTED_ERROR, ensure_ascii=False), _now()),
+        )
+        return cur.rowcount
 
 
 def get_analysis(aid: str, include_result: bool = True) -> dict | None:

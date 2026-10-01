@@ -2,7 +2,7 @@
 
 Modern reimplementation of Iramuteq (multidimensional text analysis), branded
 "ERI: Engine for Reinert Insights". Monorepo: `backend/` (FastAPI +
-NumPy/SciPy/pandas/NetworkX math engine, no R dependency) and `frontend/`
+NumPy/SciPy/scikit-learn/NetworkX math engine, no R dependency) and `frontend/`
 (Next.js 14 App Router + TypeScript + Tailwind + D3).
 
 Ships as a **native desktop app** (pywebview window over a local FastAPI
@@ -97,11 +97,21 @@ Compress-Archive -Force -Path release\ERI.exe, packaging\LEIA-ME.txt, release\de
 
 ### 6. Commit and push
 
+Stage **only the files this change touched** — never `git add -A` or
+`git add .`. The repo is public, and the working tree routinely holds
+screenshots, design exports, trial records and test corpora that must not be
+published.
+
 ```bash
-git add -A
+git status --short                         # review every path first
+git add <each file you changed>            # explicit paths only
+git diff --cached --stat                   # confirm exactly what is staged
 git commit -m "<what changed, and why>"   # end with the Co-Authored-By line
 git push origin main
 ```
+
+If `git status` lists files you did not create for this change, leave them
+unstaged and tell the user; do not commit or delete them.
 
 ### 7. Cut a release — CI builds BOTH platforms
 
@@ -111,6 +121,9 @@ tag it builds the frontend + PyInstaller binary on **windows-latest** and
 **macos-latest** (Apple Silicon), boot-tests each (headless + port file),
 zips them with the matching `packaging/LEIA-ME*.txt` + demo corpus, and
 publishes a GitHub Release.
+
+First set `VERSION` in `backend/app/main.py` to the new tag's number (it is
+what `/api/health` reports in bug reports) and commit it. Then tag:
 
 ```bash
 git tag -a v2.1.4 -m "ERI v2.1.4 — <title>
@@ -146,7 +159,6 @@ capability → minor. Architecture change → major (`v2.0.0` = native window).
 |---|---|---|
 | Dev | uvicorn :8000 + `npm run dev` :3000 | hot reload, two processes |
 | Monolith | `uvicorn app.main:app --port 8000` with `frontend/out` built | one process serves UI + API |
-| Docker | `docker compose up --build` | single container, port 8000, volume `eri-data`. **Never actually built/tested** |
 | Desktop | `ERI.exe` | native window, free port, auto-opens |
 
 The frontend is a **static export** (`output: "export"`, `trailingSlash`) — the
@@ -154,7 +166,9 @@ workspace route is `/project/?id=...` (query param, NOT a dynamic segment;
 static export can't do dynamic routes). `lib/api.ts:getApiBase()` targets
 localhost:8000 only when the page itself runs on port 3000 (dev); otherwise it
 uses the page's own origin — that's what lets one static bundle work in dev,
-Docker, and the exe (whose port is chosen at runtime). `main.py` mounts
+the monolith, and the exe (whose port is chosen at runtime). CORS admits only
+the dev UI origins (`localhost:3000` / `127.0.0.1:3000`); every other mode is
+same-origin. `main.py` mounts
 `frontend/out` (or `ERI_UI_DIR`, or PyInstaller's `_MEIPASS/ui`) at `/`.
 
 ## Architecture map
@@ -191,16 +205,22 @@ Docker, and the exe (whose port is chosen at runtime). `main.py` mounts
 - **`slate-*` renders a WARM neutral ramp** (Paper `#FBF6F2` → Ink `#211619`) —
   the identity calls for neutrals "warmed off the cold slate of stock UI".
 
-Every warm step is pinned to Tailwind slate's original **lightness (L\*)**, so
-pre-existing contrast decisions survive and only the hue moves. One deliberate
-deviation: the identity's Muted `#8C7A72` measures **3.81:1 on Paper — under
-the 4.5:1 AA floor**, and `slate-500` is used for body-secondary text
-everywhere, so `500` is `#7F6D65` (same hue, slate-500's lightness, 4.57:1).
-Accessibility beats an exact token match.
+The warm steps are **not** all at Tailwind slate's original lightness:
+50/100/200/900 are the identity's published hex values and come out darker than
+stock (L\* 97.2/93.9/89.6 vs 98.2/96.4/91.8), so contrast decisions made on
+stock slate do **not** automatically survive — re-check text on `slate-100` and
+`slate-200` surfaces. One deliberate deviation: the identity's Muted `#8C7A72`
+measures **3.81:1 on Paper — under the 4.5:1 AA floor**, and `slate-500` is used
+for body-secondary text everywhere, so `500` is `#7F6D65` (same hue,
+slate-500's lightness): **4.57:1 on Paper, but only 4.21:1 on `slate-100`** (the
+page ground and TabsList), so text sitting directly on `slate-100` uses
+`slate-600`. Accessibility beats an exact token match.
 
-`BRANDING.md` (the implementation guide) says to keep slate; the full identity
-doc says to warm it. The identity doc won — but **the two sources disagree, so
-check the identity doc, not just BRANDING.md**, before further brand work.
+`BRANDING.md` is the historical implementation guide and is out of date where
+it says to keep stock slate (Step 1) or to put `#D6266F` on AFC markers
+(Step 3); both were superseded. The identity doc it was written from is not in
+the repo; its current summary is **`DOCS.md` §3 (identity) and §4 (rigor
+rules)**. Check those and `tailwind.config.ts` before further brand work.
 
 ## Academic rigor rules (READ BEFORE TOUCHING ANY CHART)
 
@@ -223,8 +243,9 @@ for reading an analysis. Standing rules:
   (circle vs diamond) and label weight as well as colour. Don't drop them.
 - **Text on a palette fill must use `readableTextOn()`** (`lib/palette.ts`).
   Hardcoded white broke the `#F0E442` yellow class label (1.32:1 contrast).
-- **Plain mode** (`lib/appearance.tsx`, toggle in both headers,
-  localStorage-backed) strips decoration: brand loader → plain spinner, AFC
+- **Plain mode** (`lib/appearance.tsx`, toggle in both headers, stored via
+  `/api/settings` — the desktop webview keeps no localStorage between
+  launches) strips decoration: brand loader → plain spinner, AFC
   modality → black. It must never change a number, a position, or the
   categorical palette. Progress bars/percentages are functional — keep them
   in both modes.
@@ -256,7 +277,8 @@ channel, not inventing more hues.
 
 ## Conventions / gotchas
 
-- Python 3.13 local venv at `backend/.venv`; Docker uses 3.12-slim.
+- Python 3.13 local venv at `backend/.venv`; CI builds with 3.12. Pinned
+  versions in `backend/requirements.txt` must support both.
 - Analyses are synchronous functions `(doc_texts, docs, params, progress)`
   registered in `RUNNERS` in `main.py`; `TextParams.from_dict` sanitizes shared
   params — reuse it.

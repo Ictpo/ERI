@@ -23,5 +23,11 @@ ds-bundle/
 frontend/.ds-styles.css
 .design-sync/assets/
 
-# Raw source artwork — shipped only as obfuscated eri-art.bin (see packaging/encode_art.py)
+# Raw source artwork (the fox painting) — never commit it; the app no longer ships it
 /eri-fox.jpg
+
+# Local, never published: court trial records, root-level screenshots and
+# design-export archives (the repo is public; see CLAUDE.md step 6)
+.court/
+/*.png
+/*.zip

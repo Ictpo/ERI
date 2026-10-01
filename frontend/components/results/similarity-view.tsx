@@ -4,8 +4,9 @@ import * as React from "react";
 import * as d3 from "d3";
 import { Download, Maximize2, RotateCw, X } from "lucide-react";
 import type { SimilarityEdge, SimilarityResult } from "@/lib/types";
-import { categoryColor } from "@/lib/palette";
+import { categoryColor, fillStroke } from "@/lib/palette";
 import { formatNumber } from "@/lib/utils";
+import { maxSpanningTree } from "@/lib/mst";
 import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -55,34 +56,6 @@ type LaidEdge = {
 };
 
 type Hull = { community: number; path: string };
-
-/** Maximum spanning tree (Kruskal over descending weights) — the classic
-    Iramuteq "arbre maximum" rendering of a similarity graph. */
-function maxSpanningTree<E extends { source: string; target: string }>(
-  nodeIds: string[],
-  edges: E[],
-  weight: (e: E) => number
-): E[] {
-  const parent = new Map<string, string>(nodeIds.map((id) => [id, id]));
-  const find = (x: string): string => {
-    let r = x;
-    while (parent.get(r) !== r) r = parent.get(r)!;
-    parent.set(x, r);
-    return r;
-  };
-  const kept: E[] = [];
-  const sorted = [...edges].sort((a, b) => weight(b) - weight(a));
-  for (const e of sorted) {
-    const rs = find(e.source);
-    const rt = find(e.target);
-    if (rs !== rt) {
-      parent.set(rs, rt);
-      kept.push(e);
-      if (kept.length === nodeIds.length - 1) break;
-    }
-  }
-  return kept;
-}
 
 /** Pad a set of points and return a smooth closed contour around them. */
 function communityContour(points: [number, number][], pad: number): string {
@@ -323,17 +296,35 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
     return out.sort((a, b) => a.community - b.community);
   }, [laidNodes, showCommunities]);
 
-  // Fit the drawing into the viewBox with padding.
+  // Fit the drawing into the viewBox: the old fixed pad around node centres
+  // is the minimum, widened wherever a label (estimated half-width + white
+  // halo) or a community contour (same pad as `hulls` above) reaches further,
+  // so exports, which are cropped to the viewBox, never cut words or contours.
   const viewBox = React.useMemo(() => {
     if (laidNodes.length === 0) return `0 0 ${VIEW_W} ${VIEW_H}`;
-    const xs = laidNodes.map((n) => n.x);
-    const ys = laidNodes.map((n) => n.y);
     const padX = 70;
     const padY = 46;
-    const minX = Math.min(...xs) - padX;
-    const maxX = Math.max(...xs) + padX;
-    const minY = Math.min(...ys) - padY;
-    const maxY = Math.max(...ys) + padY;
+    const EDGE = 6;
+    const hullPad = new Map<number, number>();
+    for (const n of laidNodes) {
+      if (n.community < 0) continue;
+      const pad = 14 + n.halfWidth * 0.6;
+      hullPad.set(n.community, Math.max(hullPad.get(n.community) ?? 0, pad));
+    }
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const n of laidNodes) {
+      const halo = Math.max(2, n.fontSize / 5) / 2;
+      const hull = (hullPad.get(n.community) ?? 0) + EDGE;
+      const rx = Math.max(padX, n.halfWidth + halo + EDGE, hull);
+      const ry = Math.max(padY, n.fontSize / 2 + halo + EDGE, hull);
+      minX = Math.min(minX, n.x - rx);
+      maxX = Math.max(maxX, n.x + rx);
+      minY = Math.min(minY, n.y - ry);
+      maxY = Math.max(maxY, n.y + ry);
+    }
     return `${minX} ${minY} ${maxX - minX} ${maxY - minY}`;
   }, [laidNodes]);
 
@@ -554,6 +545,11 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                 const color = showCommunities
                   ? categoryColor(n.community)
                   : "#1e293b";
+                // A light palette fill (the #F0E442 yellow, 1.32:1 on white)
+                // gets a thin dark outline instead of the white halo, so the
+                // word stays readable on the white export ground; the
+                // community hue itself is unchanged (fillStroke, lib/palette).
+                const lightFill = fillStroke(color) !== color;
                 return (
                   <text
                     key={n.id}
@@ -565,8 +561,10 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                     fontWeight={n.freq / maxFreq > 0.45 ? 700 : 600}
                     fill={color}
                     opacity={dimmed ? 0.15 : 1}
-                    stroke="#ffffff"
-                    strokeWidth={Math.max(2, n.fontSize / 5)}
+                    stroke={lightFill ? fillStroke(color) : "#ffffff"}
+                    strokeWidth={
+                      lightFill ? Math.max(1.6, n.fontSize / 8) : Math.max(2, n.fontSize / 5)
+                    }
                     strokeOpacity={dimmed ? 0 : 0.85}
                     paintOrder="stroke"
                     className="cursor-pointer select-none"

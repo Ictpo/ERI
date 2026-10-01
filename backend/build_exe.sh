@@ -4,5 +4,5 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 PY="${PYTHON:-python3}"
-"$PY" -m pip install --quiet -r requirements.txt pyinstaller
+"$PY" -m pip install --quiet -r requirements.txt
 "$PY" build_exe.py

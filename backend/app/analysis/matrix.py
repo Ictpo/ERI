@@ -5,6 +5,7 @@ from collections import Counter
 from dataclasses import dataclass
 
 import numpy as np
+from scipy import sparse
 
 from ..errors import AppError
 from ..nlp.segment import Segment, segment_corpus
@@ -15,7 +16,7 @@ MAX_ACTIVE_FORMS = 3000
 
 @dataclass
 class SegmentMatrix:
-    X: np.ndarray               # (n_segments, n_forms) binary presence matrix
+    X: sparse.csr_array         # (n_segments, n_forms) binary presence matrix (sparse CSR)
     forms: list[str]            # column labels
     form_freq: np.ndarray       # total occurrences per form (across corpus)
     segments: list[Segment]     # rows (only segments with >= 1 active form)
@@ -48,21 +49,27 @@ def build_segment_matrix(doc_texts: list[str], p: TextParams, seg_size: int = 40
 
     kept_segments: list[Segment] = []
     kept_forms: list[list[str]] = []
-    rows = []
+    # Build the CSR arrays directly. The matrix is binary and almost all
+    # zeros; a dense float64 copy is n_segments x 3000 x 8 bytes (gigabytes
+    # for a corpus near the 30 MB upload limit).
+    indices: list[int] = []
+    indptr = [0]
     for seg, forms in zip(segments, seg_forms_all):
-        present = sorted({f for f in forms if f in active_set})
+        present = sorted({col[f] for f in forms if f in active_set})
         if not present:
             continue
-        row = np.zeros(len(active), dtype=np.float64)
-        row[[col[f] for f in present]] = 1.0
-        rows.append(row)
+        indices.extend(present)
+        indptr.append(len(indices))
         kept_segments.append(seg)
         kept_forms.append([f for f in forms if f in active_set])
 
-    if len(rows) < 2:
+    if len(kept_segments) < 2:
         raise AppError("corpus_too_small", "Fewer than two usable text segments were found.",
                        "Provide more text or lower the minimum frequency.")
 
-    X = np.vstack(rows)
+    X = sparse.csr_array(
+        (np.ones(len(indices)), np.array(indices, dtype=np.int64), np.array(indptr, dtype=np.int64)),
+        shape=(len(kept_segments), len(active)),
+    )
     form_freq = np.array([freq[f] for f in active], dtype=np.float64)
     return SegmentMatrix(X, active, form_freq, kept_segments, kept_forms, len(segments))

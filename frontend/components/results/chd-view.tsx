@@ -140,8 +140,11 @@ export function ChdView({ result }: { result: ChdResult }) {
         <Badge variant="secondary">
           {formatNumber(result.n_segments)} segments
         </Badge>
-        <Badge variant="secondary">
-          {formatNumber(result.n_classified)} classified (
+        <Badge
+          variant="secondary"
+          title="Segments with at least one active word. ERI puts every one of them in a class, so this is NOT Iramuteq's '% classified' retention rate."
+        >
+          {formatNumber(result.n_classified)} usable (
           {result.pct_classified.toFixed(1)}%)
         </Badge>
         <Badge variant="secondary">{result.classes.length} classes</Badge>
@@ -395,11 +398,13 @@ function ClassInspector({
               className={cn(
                 "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
                 c.id === selectedId
-                  ? "border-transparent text-white"
+                  ? "border-transparent"
                   : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
               )}
               style={
-                c.id === selectedId ? { backgroundColor: categoryColor(i) } : undefined
+                c.id === selectedId
+                  ? { backgroundColor: categoryColor(i), color: readableTextOn(categoryColor(i)) }
+                  : undefined
               }
             >
               Class {c.id} · {c.pct.toFixed(1)}%

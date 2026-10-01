@@ -65,6 +65,18 @@ def _refine_split(sub: np.ndarray, mask: np.ndarray, max_iter: int = 20) -> tupl
     return best_mask, best_chi
 
 
+def _two_means(coords: np.ndarray) -> np.ndarray:
+    """2-means labels in the CA factor space (scikit-learn, fixed seed).
+
+    Kept on scikit-learn on purpose: any other k-means implementation starts
+    from different centroids, and that changed the classes of existing
+    corpora. Identical results for the same corpus and settings outweigh the
+    smaller bundle."""
+    from sklearn.cluster import KMeans
+
+    return KMeans(n_clusters=2, n_init=5, random_state=0).fit_predict(coords)
+
+
 def _best_split(X: np.ndarray) -> tuple[np.ndarray, float] | None:
     """Split rows of X into two groups. Returns (bool mask of group 1, chi2)."""
     n = X.shape[0]
@@ -82,13 +94,21 @@ def _best_split(X: np.ndarray) -> tuple[np.ndarray, float] | None:
 
     # Candidate A: best chi2 cut along the first CA axis (classic Reinert).
     order = np.argsort(ca.row_coords[:, 0], kind="stable")
-    cum = np.cumsum(sub[order], axis=0)
-    total = cum[-1]
     cuts = np.arange(MIN_LEAF, n - MIN_LEAF + 1)
     if cuts.size:
         if cuts.size > MAX_CUT_CANDIDATES:
             cuts = cuts[np.linspace(0, cuts.size - 1, MAX_CUT_CANDIDATES).astype(int)]
-        chi_by_cut = [_partition_chi2(cum[k - 1], total - cum[k - 1]) for k in cuts]
+        # Column totals of the first k ordered rows, accumulated block by
+        # block between candidate cuts (never a dense n x V cumulative sum).
+        ordered = sub[order]
+        total = np.asarray(ordered.sum(axis=0)).ravel()
+        head = np.zeros(sub.shape[1])
+        prev = 0
+        chi_by_cut = []
+        for k in cuts:
+            head = head + np.asarray(ordered[prev:k].sum(axis=0)).ravel()
+            prev = k
+            chi_by_cut.append(_partition_chi2(head, total - head))
         k = int(cuts[int(np.argmax(chi_by_cut))])
         mask = np.zeros(n, dtype=bool)
         mask[order[:k]] = True
@@ -96,15 +116,11 @@ def _best_split(X: np.ndarray) -> tuple[np.ndarray, float] | None:
 
     # Candidate B: 2-means in the CA factor space (catches contrasts that
     # axis 1 alone cannot order, e.g. when coordinates tie).
-    try:
-        from sklearn.cluster import KMeans
-
-        labels = KMeans(n_clusters=2, n_init=5, random_state=0).fit_predict(ca.row_coords)
-        mask = labels == 0
-        if MIN_LEAF <= mask.sum() <= n - MIN_LEAF:
-            candidates.append(mask)
-    except Exception:
-        pass
+    # A failure here raises (and fails the job) rather than silently
+    # switching CHD to a different method.
+    labels = _two_means(ca.row_coords)
+    if MIN_LEAF <= (labels == 0).sum() <= n - MIN_LEAF:
+        candidates.append(labels == 0)
 
     def balance(m: np.ndarray) -> int:
         return int(min(m.sum(), n - m.sum()))
@@ -122,41 +138,53 @@ def _best_split(X: np.ndarray) -> tuple[np.ndarray, float] | None:
 
 
 def _word_profile(in_class: np.ndarray, sm: SegmentMatrix, max_words: int = 40) -> list[dict]:
-    """Per-word chi2 association (segment presence in class vs. rest)."""
+    """Per-word chi2 association (segment presence in class vs. rest).
+
+    Pearson chi2 of each form's 2x2 table without Yates correction -- the
+    numbers scipy.stats.chi2_contingency(correction=False) gives, computed for
+    all forms at once instead of one scipy call per form."""
     n_in = int(in_class.sum())
     n_out = sm.X.shape[0] - n_in
     a = sm.X[in_class].sum(axis=0)           # segs in class containing word
     b = sm.X[~in_class].sum(axis=0)
-    out = []
-    for j, form in enumerate(sm.forms):
-        table = np.array([[a[j], n_in - a[j]], [b[j], n_out - b[j]]], dtype=float)
-        if table[0, 0] == 0 or table.min() < 0:
-            continue
-        # Only report over-represented words (observed > expected in class).
-        expected = (a[j] + b[j]) * n_in / (n_in + n_out)
-        if a[j] <= expected:
-            continue
-        try:
-            chi, p, _, _ = chi2_contingency(table, correction=False)
-        except ValueError:
-            continue
-        out.append({
-            "form": form,
-            "chi2": round(float(chi), 2),
-            "p": float(f"{p:.3g}"),
-            "freq_in": int(a[j]),
-            "freq_total": int(a[j] + b[j]),
-        })
+    a = np.asarray(a, dtype=float).ravel()
+    b = np.asarray(b, dtype=float).ravel()
+    n = n_in + n_out
+    with_form = a + b                        # segments containing the form
+    without_form = n - with_form
+    # Only over-represented words (observed > expected in class); a zero
+    # expected cell is where chi2_contingency raised and the form was skipped.
+    keep = (a > 0) & (a > with_form * n_in / n) & (without_form > 0) & (n_out > 0)
+    j = np.flatnonzero(keep)
+    chi = np.zeros(j.size)
+    for obs, row_total, col_total in (
+        (a[j], n_in, with_form[j]), (n_in - a[j], n_in, without_form[j]),
+        (b[j], n_out, with_form[j]), (n_out - b[j], n_out, without_form[j]),
+    ):
+        expected = row_total * col_total / n
+        chi = chi + (obs - expected) ** 2 / expected
+    p = chi2_dist.sf(chi, 1)
+    out = [
+        {"form": sm.forms[k], "chi2": round(float(c), 2), "p": float(f"{pv:.3g}"),
+         "freq_in": int(a[k]), "freq_total": int(a[k] + b[k])}
+        for k, c, pv in zip(j, chi, p)
+    ]
     out.sort(key=lambda w: -w["chi2"])
     return out[:max_words]
 
 
-def _variable_profile(in_class: np.ndarray, sm: SegmentMatrix, docs: list[dict]) -> list[dict]:
+def _segment_modalities(sm: SegmentMatrix, docs: list[dict]) -> dict[tuple[str, str], np.ndarray]:
+    """(variable, modality) -> mask of the segments whose document has it."""
     seg_mods: dict[tuple[str, str], np.ndarray] = {}
     for var in sorted({v for d in docs for v in d.get("variables", {})}):
         values = np.array([docs[s.doc_index].get("variables", {}).get(var, "") for s in sm.segments])
         for mod in sorted(set(values) - {""}):
             seg_mods[(var, mod)] = values == mod
+    return seg_mods
+
+
+def _variable_profile(in_class: np.ndarray, sm: SegmentMatrix,
+                      seg_mods: dict[tuple[str, str], np.ndarray]) -> list[dict]:
     n_in = int(in_class.sum())
     n = sm.X.shape[0]
     out = []
@@ -245,6 +273,7 @@ def run_chd(doc_texts: list[str], docs: list[dict], params: dict, progress=lambd
                        "The vocabulary may be too uniform; try more text or a lower min_freq.")
 
     progress(0.75, "Profiling classes (chi-square word associations)")
+    seg_mods = _segment_modalities(sm, docs)  # once, not once per class
     classes = []
     for ci, node in enumerate(sorted(terminals, key=lambda nd: -nd["_idx"].size), start=1):
         node["class_id"] = ci
@@ -257,7 +286,7 @@ def run_chd(doc_texts: list[str], docs: list[dict], params: dict, progress=lambd
             "size": int(in_class.sum()),
             "pct": round(100.0 * in_class.sum() / n, 1),
             "words": words,
-            "variables": _variable_profile(in_class, sm, docs),
+            "variables": _variable_profile(in_class, sm, seg_mods),
             "segments": _characteristic_segments(in_class, sm, words),
         })
 

@@ -1,15 +1,17 @@
 # ERI: Engine for Reinert Insights
 
-A modern, multi-user web reimplementation of [Iramuteq](http://www.iramuteq.org/) —
-multidimensional text and questionnaire analysis — with the legacy wxPython/R desktop
-stack replaced by a FastAPI statistical engine and an interactive Next.js interface.
+A desktop app for multidimensional text and questionnaire analysis: a modern
+reimplementation of [Iramuteq](http://www.iramuteq.org/). ERI opens in its own
+native window on Windows and macOS. Inside, the legacy wxPython/R stack is replaced
+by a Python statistical engine (FastAPI, running locally inside the app) and an
+interactive Next.js interface. Your projects stay on your computer, in a per-user
+data folder.
 
 | Legacy Iramuteq pain point | ERI |
 | --- | --- |
-| Fragile local Python 2 + R install | `docker compose up` — zero local setup |
-| Single-user desktop GUI | Server-side projects, any number of browsers |
+| Fragile local Python 2 + R install | Download, unzip, double-click. No Python, R or anything else to install |
 | `**** *var_mod` manual text tagging | Visual corpus builder: upload TXT/CSV, edit variables in a table (legacy format still parsed) |
-| Static R plot images | Interactive, zoomable D3/Cytoscape visualizations with SVG/PNG export |
+| Static R plot images | Interactive, zoomable D3 visualizations with SVG/PNG export |
 | Cryptic R stack traces | Every error is a human-readable message with an actionable hint |
 | UI freezes during computation | Async job pipeline with live SSE progress |
 
@@ -22,7 +24,7 @@ stack replaced by a FastAPI statistical engine and an interactive Next.js interf
   successive chi-square bipartitions, interactive dendrogram with per-class χ² word
   profiles, over-represented variables and characteristic segments.
 - **Similarity analysis** — co-occurrence network (co-occurrence / Jaccard / cosine),
-  force-directed Cytoscape graph, community detection, live threshold sliders.
+  force-directed D3 graph, community detection, live threshold sliders.
 - **Correspondence factor analysis (AFC)** — vocabulary × variable-modalities factor
   map with inertia percentages, contributions, hover details, zoom/pan.
 - **Text statistics** — frequencies, hapax legomena, per-variable totals, dynamic
@@ -30,9 +32,10 @@ stack replaced by a FastAPI statistical engine and an interactive Next.js interf
 
 ## Quick start
 
-Three ways to run ERI, most convenient first:
+ERI is meant to be used as the desktop app. The other two ways below are for
+development.
 
-**Standalone binaries (no installs at all)** — download from
+**The desktop app (no installs at all)** — download from
 [GitHub Releases](https://github.com/Ictpo/ERI/releases): `ERI-win64.zip`
 (Windows) and `ERI-macos-arm64.zip` (Apple Silicon Macs). Built automatically
 by CI (`.github/workflows/build.yml`) on every `v*` tag — PyInstaller cannot
@@ -44,16 +47,10 @@ Build locally instead:
 cd frontend; npm install; npm run build          # static export -> frontend/out
 cd ..\backend; powershell -ExecutionPolicy Bypass -File build_exe.ps1   # Windows
 # or on macOS/Linux:  cd ../backend && ./build_exe.sh
-.\dist\ERI.exe                                    # opens the browser by itself
+.\dist\ERI.exe                                    # opens in its own window
 ```
 
-**Docker (single container)**:
-
-```bash
-docker compose up --build     # UI + API on http://localhost:8000
-```
-
-**Dev mode (two processes, hot reload)**:
+**Dev mode (two processes, hot reload, in a browser)**:
 
 ```bash
 cd backend && python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
@@ -73,10 +70,10 @@ cd frontend && npm run build
 
 ## Repository layout
 
+- `DOCS.md` — what the app does, its visual identity, and how it works end to end
 - `CONTRACT.md` — the API contract both halves are built against
-- `backend/` — FastAPI + NumPy/SciPy/pandas/NetworkX engine (no R);
+- `backend/` — FastAPI + NumPy/SciPy/scikit-learn/NetworkX engine (no R);
   `desktop.py` + `build_exe.ps1` produce the standalone `ERI.exe`.
   See [`backend/ANALYSIS.md`](backend/ANALYSIS.md) for how each analysis is computed.
 - `frontend/` — Next.js 14 workspace UI (static export) with D3 visualizations
-- `Dockerfile` / `docker-compose.yml` — single-container build
 - `CLAUDE.md` — architecture map, run scripts and conventions for future work

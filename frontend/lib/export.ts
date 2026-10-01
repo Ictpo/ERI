@@ -8,6 +8,8 @@
  *                         never the current pan/zoom viewport
  */
 
+import { toast } from "@/components/ui/use-toast";
+
 const STYLE_PROPS = [
   "fill",
   "fill-opacity",
@@ -192,7 +194,17 @@ export async function downloadBlob(blob: Blob, filename: string) {
       const b64 = arrayBufferToBase64(await blob.arrayBuffer());
       await save(filename, b64, ext);
       return;
-    } catch {
+    } catch (err) {
+      // The chosen location could not be written (read-only folder, full or
+      // disconnected drive): say so instead of returning as if it saved.
+      if (err instanceof Error && err.name === "SaveError") {
+        toast({
+          variant: "destructive",
+          title: "File not saved",
+          description: `${err.message} — Choose a different folder and try again.`,
+        });
+        return;
+      }
       // fall through to the browser download
     }
   }

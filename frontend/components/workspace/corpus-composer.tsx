@@ -15,7 +15,7 @@ import { api } from "@/lib/api";
 import type { CorpusSummary } from "@/lib/types";
 import { toastError } from "@/lib/toast-error";
 import { downloadBlob } from "@/lib/export";
-import { formatNumber } from "@/lib/utils";
+import { formatNumber, truncate } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -38,6 +38,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Pager } from "./pager";
+import { ConfirmDialog } from "./confirm-dialog";
 
 /* MyBib-style corpus composer: define the variable schema once, then add
    documents one by one (paste text, pick variable values from dropdowns).
@@ -48,13 +50,34 @@ type Doc = { text: string; variables: Record<string, string> };
 
 const NONE = "__none__";
 const ADD_NEW = "__add_new__";
+// Documents shown at once. Loading a large corpus used to put every
+// document's full text in the page.
+const PAGE_SIZE = 50;
+
+function tokenCount(text: string): number {
+  const trimmed = text.trim();
+  return trimmed ? trimmed.split(/\s+/).length : 0;
+}
 
 function sanitizeName(raw: string): string {
-  return raw.replace(/[^A-Za-z0-9_]/g, "").slice(0, 24);
+  // No "_": in a `*name_value` tag the first underscore ends the name.
+  return raw.replace(/[^A-Za-z0-9]/g, "").slice(0, 24);
 }
 
 function sanitizeValue(raw: string): string {
   return raw.trim().replace(/[\s*]+/g, "_").slice(0, 32);
+}
+
+/** Tag-safe name/value for `*name_value`. The parser (backend
+    corpus_parse._parse_tags) splits a tag at its FIRST underscore and ends it
+    at whitespace or "*"; names and values loaded from a CSV or an existing
+    corpus were never sanitized, so clean them when writing the tag. */
+function tagName(name: string): string {
+  return name.replace(/[_\s*]+/g, "");
+}
+
+function tagValue(value: string): string {
+  return value.trim().replace(/[\s*]+/g, "_");
 }
 
 export function CorpusComposer({
@@ -62,11 +85,14 @@ export function CorpusComposer({
   hasExistingCorpus,
   onSaved,
   onCancel,
+  onDirtyChange,
 }: {
   projectId: string;
   hasExistingCorpus: boolean;
   onSaved: (summary: CorpusSummary) => void;
   onCancel?: () => void;
+  /** Reports whether the composer holds unsaved work (for leave prompts). */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [schema, setSchema] = React.useState<VarDef[]>([]);
   const [docs, setDocs] = React.useState<Doc[]>([]);
@@ -76,12 +102,18 @@ export function CorpusComposer({
   // Text editor dialog: index of the doc being edited, or "new".
   const [editing, setEditing] = React.useState<number | "new" | null>(null);
   const [draftText, setDraftText] = React.useState("");
+  const [page, setPage] = React.useState(0);
   // Inline "add new value" state for a specific doc x variable cell.
   const [addingValue, setAddingValue] = React.useState<{
     doc: number;
     varName: string;
     text: string;
   } | null>(null);
+  const [confirmCancel, setConfirmCancel] = React.useState(false);
+  // Unsaved work: every edit replaces `docs`/`schema` with a new array, so
+  // comparing with the arrays present right after loading is enough.
+  const baseline = React.useRef<{ schema: VarDef[]; docs: Doc[] } | null>(null);
+  const [dirty, setDirty] = React.useState(false);
 
   // Editing an existing corpus: load it and infer the schema.
   React.useEffect(() => {
@@ -111,6 +143,19 @@ export function CorpusComposer({
       cancelled = true;
     };
   }, [projectId, hasExistingCorpus]);
+
+  React.useEffect(() => {
+    if (loading) return;
+    if (!baseline.current) {
+      baseline.current = { schema, docs };
+      return;
+    }
+    setDirty(
+      schema !== baseline.current.schema || docs !== baseline.current.docs
+    );
+  }, [schema, docs, loading]);
+  React.useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  React.useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   // ---- schema operations ----
 
@@ -172,6 +217,7 @@ export function CorpusComposer({
     if (!text) return;
     if (editing === "new") {
       setDocs((prev) => [...prev, { text, variables: {} }]);
+      setPage(Math.floor(docs.length / PAGE_SIZE)); // page of the new document
     } else if (editing !== null) {
       setDocs((prev) =>
         prev.map((d, i) => (i === editing ? { ...d, text } : d))
@@ -251,8 +297,8 @@ export function CorpusComposer({
     const parts = docs.map((d, i) => {
       const variables = finalVariables(d, i);
       const tags = schema
-        .filter((v) => variables[v.name])
-        .map((v) => `*${v.name}_${variables[v.name]}`)
+        .filter((v) => variables[v.name] && tagName(v.name))
+        .map((v) => `*${tagName(v.name)}_${tagValue(variables[v.name])}`)
         .join(" ");
       return `**** ${tags}`.trimEnd() + `\n${d.text.trim()}\n`;
     });
@@ -263,8 +309,21 @@ export function CorpusComposer({
   }
 
   const canSave = docs.length > 0 && !saving;
-  const tokenCount = (text: string) =>
-    text.trim() ? text.trim().split(/\s+/).length : 0;
+  const pageCount = Math.max(1, Math.ceil(docs.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const start = currentPage * PAGE_SIZE;
+  // Word counts for the visible page, recomputed when documents change and
+  // not on every keystroke in the editor dialog.
+  const pageWordCounts = React.useMemo(
+    () => docs.slice(start, start + PAGE_SIZE).map((d) => tokenCount(d.text)),
+    [docs, start]
+  );
+  // A stray click outside the editor, or Esc, must not throw away a pasted
+  // interview; its Cancel and close buttons still discard on purpose.
+  const editorDirty =
+    editing !== null &&
+    draftText.trim() !==
+      (editing === "new" ? "" : docs[editing]?.text ?? "").trim();
 
   if (loading) {
     return (
@@ -290,7 +349,10 @@ export function CorpusComposer({
           </p>
         </div>
         {onCancel && (
-          <Button variant="ghost" onClick={onCancel}>
+          <Button
+            variant="ghost"
+            onClick={() => (dirty ? setConfirmCancel(true) : onCancel())}
+          >
             Cancel
           </Button>
         )}
@@ -372,7 +434,7 @@ export function CorpusComposer({
           <div className="flex gap-2">
             <Input
               value={newVarName}
-              placeholder="New variable name (letters, numbers, _)"
+              placeholder="New variable name (letters and numbers)"
               className="max-w-xs"
               onChange={(e) => setNewVarName(sanitizeName(e.target.value))}
               onKeyDown={(e) => {
@@ -415,13 +477,15 @@ export function CorpusComposer({
         </button>
       ) : (
         <div className="space-y-2">
-          {docs.map((doc, i) => (
+          {docs.slice(start, start + PAGE_SIZE).map((doc, offset) => {
+            const i = start + offset;
+            return (
             <Card key={i}>
               <CardContent className="space-y-2 p-3">
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">Document {i + 1}</Badge>
                   <span className="text-xs text-slate-400">
-                    {formatNumber(tokenCount(doc.text))} words
+                    {formatNumber(pageWordCounts[offset])} words
                   </span>
                   <div className="ml-auto flex gap-1">
                     <Button
@@ -443,7 +507,7 @@ export function CorpusComposer({
                   </div>
                 </div>
                 <p className="line-clamp-2 text-sm text-slate-600">
-                  {doc.text}
+                  {truncate(doc.text, 400)}
                 </p>
                 {schema.length > 0 && (
                   <div className="grid gap-2 pt-1 sm:grid-cols-2 lg:grid-cols-3">
@@ -520,7 +584,15 @@ export function CorpusComposer({
                 )}
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
+          <Pager
+            page={currentPage}
+            pageCount={pageCount}
+            total={docs.length}
+            pageSize={PAGE_SIZE}
+            onPage={setPage}
+          />
         </div>
       )}
 
@@ -531,7 +603,15 @@ export function CorpusComposer({
           if (!open) setEditing(null);
         }}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent
+          className="max-w-2xl"
+          onInteractOutside={(e) => {
+            if (editorDirty) e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            if (editorDirty) e.preventDefault();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>
               {editing === "new"
@@ -571,6 +651,18 @@ export function CorpusComposer({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmCancel}
+        title="Discard your changes?"
+        description="The documents and variables you added or edited here are not saved. Leaving the composer discards them."
+        confirmLabel="Discard"
+        onConfirm={() => {
+          setConfirmCancel(false);
+          onCancel?.();
+        }}
+        onCancel={() => setConfirmCancel(false)}
+      />
     </div>
   );
 }

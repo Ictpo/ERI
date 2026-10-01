@@ -4,25 +4,23 @@ from __future__ import annotations
 import os
 import sys
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import storage
-from .analysis.afc import run_afc
-from .analysis.chd import run_chd
-from .analysis.similarity import run_similarity
-from .analysis.stats import run_stats
 from .errors import AppError, translate_exception
 from .jobs import manager
 from .nlp.corpus_parse import parse_csv, parse_txt
 from .nlp.tokenize import raw_tokens
 
-VERSION = "1.0.0"
+VERSION = "2.3.1"  # keep equal to the release tag (CLAUDE.md step 7)
 
 
 from contextlib import asynccontextmanager
@@ -31,13 +29,22 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     storage.init_db()
+    # Jobs live only in this process, so anything still queued/running was
+    # cut off when ERI last stopped (window closed, crash, Ctrl+C). Close it
+    # out so the UI shows an error instead of waiting forever.
+    storage.fail_interrupted_analyses()
     yield
 
 
 app = FastAPI(title="ERI: Engine for Reinert Insights — API", version=VERSION, lifespan=_lifespan)
+# Only the dev UI (`next dev` on :3000) calls the API cross-origin. The desktop
+# exe and the monolith serve UI and API from one origin and need no CORS, and
+# a wildcard would let any web page open in the user's browser read or delete
+# projects on this local server once it found the port.
+DEV_UI_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=DEV_UI_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -51,6 +58,23 @@ async def _app_error(_req: Request, exc: AppError):
 @app.exception_handler(Exception)
 async def _any_error(_req: Request, exc: Exception):
     err = translate_exception(exc)
+    return JSONResponse(status_code=err.status, content={"error": err.to_dict()})
+
+
+@app.exception_handler(RequestValidationError)
+async def _invalid_request(_req: Request, exc: RequestValidationError):
+    # FastAPI's default 422 body ({"detail": [...]}) is outside the contract
+    # envelope; the UI could only show "Request failed (422)".
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    field = ".".join(str(p) for p in first.get("loc", ()) if p not in ("body", "query", "path"))
+    reason = first.get("msg", "invalid value")
+    err = AppError(
+        "invalid_request",
+        f"Invalid {field}: {reason}." if field else f"Invalid request: {reason}.",
+        "Correct the value and try again.",
+        422,
+    )
     return JSONResponse(status_code=err.status, content={"error": err.to_dict()})
 
 
@@ -76,7 +100,34 @@ class AnalysisIn(BaseModel):
     params: dict = Field(default_factory=dict)
 
 
-RUNNERS = {"stats": run_stats, "chd": run_chd, "similarity": run_similarity, "afc": run_afc}
+class SettingsIn(BaseModel):
+    plain_mode: bool
+
+
+# Analysis modules (and with them numpy, scipy and networkx) are imported on
+# first use, in the worker thread, instead of while the window shows its
+# splash. Plain import statements keep them visible to PyInstaller.
+def _run_stats(*args, **kwargs):
+    from .analysis.stats import run_stats
+    return run_stats(*args, **kwargs)
+
+
+def _run_chd(*args, **kwargs):
+    from .analysis.chd import run_chd
+    return run_chd(*args, **kwargs)
+
+
+def _run_similarity(*args, **kwargs):
+    from .analysis.similarity import run_similarity
+    return run_similarity(*args, **kwargs)
+
+
+def _run_afc(*args, **kwargs):
+    from .analysis.afc import run_afc
+    return run_afc(*args, **kwargs)
+
+
+RUNNERS = {"stats": _run_stats, "chd": _run_chd, "similarity": _run_similarity, "afc": _run_afc}
 
 
 # ---------- helpers ----------
@@ -113,6 +164,17 @@ def _summarize(documents: list[dict]) -> dict:
 @app.get("/api/health")
 def health():
     return {"ok": True, "version": VERSION}
+
+
+@app.get("/api/settings")
+def settings_get():
+    return {"plain_mode": storage.get_setting("plain_mode") == "1"}
+
+
+@app.put("/api/settings")
+def settings_put(body: SettingsIn):
+    storage.set_setting("plain_mode", "1" if body.plain_mode else "0")
+    return {"plain_mode": body.plain_mode}
 
 
 @app.get("/api/projects")
@@ -183,6 +245,8 @@ def corpus_save(pid: str, body: CorpusIn):
         raise AppError("empty_corpus", "The corpus contains no non-empty documents.",
                        "Add at least one document with text.")
     summary = _summarize(documents)
+    # Lets the UI flag analyses that ran on an earlier version of the corpus.
+    summary["saved_at"] = datetime.now(timezone.utc).isoformat()
     storage.save_corpus(pid, documents, summary)
     return summary
 
@@ -244,8 +308,8 @@ async def analysis_events(aid: str):
 
 
 # ---------- static UI (single monolithic server) ----------
-# The Next.js static export is served from / when present, so Docker and the
-# desktop exe need only this one process. API routes above take precedence.
+# The Next.js static export is served from / when present, so the desktop exe
+# (and the monolith run mode) need only this one process. API routes above take precedence.
 
 def _ui_dir() -> Path | None:
     candidates = []

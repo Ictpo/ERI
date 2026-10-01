@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { api } from "@/lib/api";
 
 /**
  * Plain mode — strips decorative brand styling from the app.
@@ -22,32 +23,40 @@ const AppearanceContext = React.createContext<Appearance>({
   setPlain: () => {},
 });
 
-const KEY = "eri.plainMode";
-
 export function AppearanceProvider({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const [plain, setPlainState] = React.useState(false);
+  // Set once the user toggles, so a slow initial read can't undo the toggle.
+  const touched = React.useRef(false);
 
   // Read after mount — the app is a static export, so there is no server
-  // render to hydrate this from.
+  // render to hydrate this from. Stored by the backend, not localStorage: the
+  // desktop webview runs in private mode on a new port every launch, so
+  // localStorage is empty again at every start.
   React.useEffect(() => {
-    try {
-      setPlainState(window.localStorage.getItem(KEY) === "1");
-    } catch {
-      /* storage blocked — default to decorated */
-    }
+    let cancelled = false;
+    api
+      .getSettings()
+      .then((s) => {
+        if (!cancelled && !touched.current) setPlainState(s.plain_mode);
+      })
+      .catch(() => {
+        /* server unreachable — default to decorated */
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const setPlain = React.useCallback((v: boolean) => {
+    touched.current = true;
     setPlainState(v);
-    try {
-      window.localStorage.setItem(KEY, v ? "1" : "0");
-    } catch {
-      /* non-fatal */
-    }
+    api.saveSettings({ plain_mode: v }).catch(() => {
+      /* non-fatal: the toggle still applies for this session */
+    });
   }, []);
 
   const value = React.useMemo(() => ({ plain, setPlain }), [plain, setPlain]);

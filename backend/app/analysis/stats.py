@@ -20,9 +20,11 @@ def run_stats(doc_texts: list[str], docs: list[dict], params: dict,
     doc_presence: Counter = Counter()
     total_tokens = 0
     per_doc_forms: list[list[str]] = []
+    per_doc_tokens: list[int] = []
     for text in doc_texts:
         toks = raw_tokens(text)
         total_tokens += len(toks)
+        per_doc_tokens.append(len(toks))
         forms = normalize_tokens(toks, p)
         per_doc_forms.append(forms)
         freq.update(forms)
@@ -43,14 +45,17 @@ def run_stats(doc_texts: list[str], docs: list[dict], params: dict,
     var_names = sorted({v for d in docs for v in d.get("variables", {})})
     for var in var_names:
         agg: dict[str, Counter] = {}
-        for d, forms in zip(docs, per_doc_forms):
+        n_tokens: Counter = Counter()
+        for d, forms, n in zip(docs, per_doc_forms, per_doc_tokens):
             mod = d.get("variables", {}).get(var, "").strip()
             if mod:
                 agg.setdefault(mod, Counter()).update(forms)
+                # Raw running words: the same basis as total_tokens.
+                n_tokens[mod] += n
         for mod in sorted(agg):
             by_variable.append({
                 "variable": var, "modality": mod,
-                "tokens": sum(agg[mod].values()), "forms": len(agg[mod]),
+                "tokens": n_tokens[mod], "forms": len(agg[mod]),
             })
 
     progress(0.9, "Building word cloud data")

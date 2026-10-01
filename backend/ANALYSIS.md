@@ -43,6 +43,14 @@ matching the classic Iramuteq convention.
 `normalize_tokens(tokens, p)` turns raw tokens into the **forms** that analyses
 count:
 
+**French elision (`lang = fr` only), before step 1:** an elided clitic is split
+off its host word: `c'est` → `c` + `est`, `qu'il` → `qu` + `il`, `l'école` →
+`l` + `école` (clitics `c d j l m n s t qu jusqu lorsqu puisqu quoiqu`;
+underscored tokens are left alone). The clitic is then removed as a stop-word
+or by the length rule, and the host word is counted with its bare form.
+`aujourd'hui` and `quelqu'un` are not elisions and stay whole. `total_tokens`
+(§2) still counts `c'est` as one running word.
+
 1. Drop stop-words (`remove_stopwords`, default on). Built-in function-word
    lists for `en / pt / fr / es` live in
    [`app/nlp/stopwords.py`](app/nlp/stopwords.py); users may add
@@ -78,6 +86,11 @@ produces the binary design matrix shared by CHD and similarity:
 
 `form_freq` (total corpus occurrences per form) is kept alongside `X`.
 
+`X` is stored **sparse** (SciPy CSR): only the positions of the 1s are kept.
+The values are exactly those of the dense matrix; only memory changes (a
+44-interview corpus: 2,980 × 1,567 cells, 0.95% ones — 37 MB dense, 0.7 MB
+sparse).
+
 ### 1.5 Correspondence-analysis core (shared by CHD and AFC)
 
 `correspondence_analysis(N, n_axes)` ([`app/analysis/ca.py`](app/analysis/ca.py))
@@ -112,6 +125,29 @@ Derived quantities:
 Rows/columns that were all-zero are re-expanded with zero coordinates and zero
 mass so indexing matches the input.
 
+#### Two solvers
+
+Tables of up to `DENSE_SVD_MAX_CELLS = 12,000,000` cells (and every AFC table)
+take the **exact** dense SVD above. Larger sparse tables (CHD/similarity on
+corpora near the 30 MB upload cap) never build `S`; they compute only the
+leading `n_axes` singular triples with ARPACK's Lanczos solver (`svds`), using
+
+```
+Q = D_r^(-1/2) · P · D_c^(-1/2)        # sparse, same zeros as N
+S = Q − sqrt(r) sqrt(c)ᵀ               # applied implicitly:
+S v  = Q v  − sqrt(r) (sqrt(c)ᵀ v)
+Sᵀ u = Qᵀ u − sqrt(c) (sqrt(r)ᵀ u)
+Σ S² = Σ Q² − 1                        # total inertia, since P, r, c each sum to 1
+```
+
+with a fixed start vector (seed 0), so it is deterministic. On a random
+3,000 × 1,800 table both solvers agree to ~4·10⁻¹³ in every coordinate, **up to
+the sign of each axis**. That sign is arbitrary in any SVD; AFC is unaffected,
+but CHD's cut scan and tie-break are not sign-symmetric, so a table that
+crosses the threshold can receive a different (equally valid) classification.
+The threshold is set so real interview corpora (≈ 9 M cells even at
+`min_freq = 1`) stay on the exact solver and reproduce earlier results.
+
 ---
 
 ## 2. Text statistics (`stats`)
@@ -129,8 +165,10 @@ For every document: `raw_tokens` → `normalize_tokens`. Then aggregate:
 - `unique_forms` = number of distinct forms; `hapax` = forms with frequency
   exactly 1; `hapax_count` its size.
 - **Frequency table**: `[{form, freq, docs}]` sorted by descending frequency.
-- **By variable**: for each corpus variable and each modality, the summed
-  `tokens` and distinct `forms` of the documents carrying that modality.
+- **By variable**: for each corpus variable and each modality, over the
+  documents carrying that modality: `tokens`, their **raw** running words
+  (the same basis as `total_tokens`), and `forms`, their distinct forms after
+  filtering (the same basis as `unique_forms`).
 - **Word-cloud data**: the `max_cloud_words` (default 150, cap 300) most
   frequent forms as `{form, freq}`.
 
@@ -222,7 +260,16 @@ For each class (membership mask `in_class`):
 `{n_segments, n_classified, pct_classified, tree, classes}` where `tree` is the
 serialized dendrogram (nested `{id, size, class_id, children}`) and `classes`
 carries the profiles above. `pct_classified` is the share of all segments that
-ended up in a class (segments with no active form are unclassified).
+contain at least one active form; every such segment is assigned to a class
+(segments with no active form are left out).
+
+**This is not the Reinert / Alceste / Iramuteq "% of segments classified".**
+There, that figure is a retention rate: segments are dropped when they do not
+fall in a retained terminal class (too small, or unstable between the two runs
+of a double classification), and researchers read it as an adequacy check
+(commonly ≥ 75%). ERI has no retention stage, so `pct_classified` is close to
+100% by construction and must not be reported as that check. The key keeps its
+name for compatibility with stored results; the UI labels it "usable".
 
 ---
 
@@ -254,7 +301,18 @@ Parameter: `max_terms` (default 60, clamped 5–200).
    (Pairs co-occurring only once are dropped as noise.)
 4. **Communities**: greedy modularity maximization
    (`networkx.community.greedy_modularity_communities`, weighted by `cooc`).
-   Each node gets a community id (or `-1` if isolated / graph has no edges).
+   The partition covers every node: a form with no edge forms its own
+   singleton community and still gets a palette colour. Only when the graph
+   has no edges at all does every node get `-1`.
+5. **Display: maximum spanning tree (default).** The view
+   ([`similarity-view.tsx`](../frontend/components/results/similarity-view.tsx),
+   `maxSpanningTree`) draws Iramuteq's *arbre maximum* by default: Kruskal
+   over the edges sorted by descending weight on the selected metric
+   (co-occurrence, Jaccard or cosine), computed in the UI after the "Min node
+   freq" and "Min edge weight" filters. A disconnected graph gives a maximum
+   spanning *forest*. Communities come from step 4 (full graph, `cooc`
+   weights), so one community can span several branches of the tree. Switch
+   off "Max spanning tree" to draw every edge.
 
 Output: `{nodes: [{id, freq, community}], edges: [{source, target, cooc,
 jaccard, cosine}], n_segments}`. Node size in the UI reflects corpus frequency;
@@ -282,10 +340,11 @@ Parameters: `variable` (required — the corpus variable to analyse),
 4. Run the CA core (§1.5) with `n_axes = 3` if there are > 3 modalities, else
    `2`.
 5. Emit, for rows (words) and columns (modalities):
-   `{label, x, y, z, mass, contrib_x, contrib_y, freq}` — `x,y,z` are principal
-   coordinates on axes 1–3, `mass` the marginal weight, `contrib_*` the
-   percentage contribution to each axis, `freq` the raw frequency. `explained`
-   gives the percentage of inertia per axis.
+   `{label, x, y, z, mass, contrib_x, contrib_y, contrib_z, freq}` — `x,y,z`
+   are principal coordinates on axes 1–3, `mass` the marginal weight,
+   `contrib_x,y,z` the percentage contribution to axes 1–3 (`z` and
+   `contrib_z` are `null` when there is no third axis), `freq` the raw
+   frequency. `explained` gives the percentage of inertia per axis.
 
 The map reads like any CA biplot: words plotted near a modality are
 over-represented in it; distance from the origin and `contrib_*` indicate how
@@ -304,4 +363,8 @@ filter out all vocabulary.
 ## Determinism
 
 All results are deterministic for a given corpus and parameter set: k-means
-uses `random_state=0`, and every other step (SVD, χ² scans, counting) is exact.
+uses scikit-learn with `random_state=0`, the truncated solver starts from a
+fixed vector, and every other step (SVD, χ² scans, counting) is exact. Library
+versions are pinned in `backend/requirements.txt`, so every release bundles
+the numerical libraries the test suite ran against. A corpus that grows past
+`DENSE_SVD_MAX_CELLS` switches CA solver; see §1.5 for what that can change.

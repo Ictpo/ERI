@@ -9,15 +9,19 @@ import type {
   Health,
   Project,
   ProjectDetail,
+  Settings,
 } from "./types";
 
 /**
  * Backend base URL. In dev the UI runs on :3000 with the API on :8000; when
- * the static export is served by the backend itself (Docker / desktop exe),
- * the API lives on the same origin as the page.
+ * the static export is served by the backend itself (desktop exe / monolith),
+ * the API lives on the same origin as the page. NEXT_PUBLIC_API_URL overrides
+ * the base in `next dev` only: `next build` would inline it into the static
+ * export and send the desktop exe (random port) to the wrong server.
  */
 export function getApiBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (process.env.NODE_ENV === "development" && process.env.NEXT_PUBLIC_API_URL)
+    return process.env.NEXT_PUBLIC_API_URL;
   if (typeof window !== "undefined" && window.location.port !== "3000") {
     return window.location.origin;
   }
@@ -45,7 +49,10 @@ export function toErrorInfo(err: unknown): { message: string; hint: string | nul
   if (err instanceof TypeError)
     return {
       message: "Could not reach the analysis server.",
-      hint: `Check that the backend is running at ${getApiBase()}.`,
+      hint:
+        typeof window !== "undefined" && window.location.port === "3000"
+          ? `Dev mode: check that the API server is running at ${getApiBase()}.`
+          : "Close ERI and open it again, then retry.",
     };
   if (err instanceof Error) return { message: err.message, hint: null };
   return { message: "Unexpected error.", hint: null };
@@ -140,4 +147,13 @@ export const api = {
   /** URL for the SSE progress stream of an analysis. */
   analysisEventsUrl: (analysisId: string) =>
     `${getApiBase()}/api/analyses/${analysisId}/events`,
+
+  // App settings — kept server-side because the desktop webview keeps no
+  // localStorage between launches (private mode, new port every launch).
+  getSettings: () => request<Settings>("/settings"),
+  saveSettings: (settings: Settings) =>
+    request<Settings>("/settings", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    }),
 };

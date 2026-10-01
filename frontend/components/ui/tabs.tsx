@@ -13,7 +13,9 @@ const TabsList = React.forwardRef<
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center rounded-lg bg-slate-100 p-1 text-slate-500",
+      // Inactive labels sit on slate-100, where slate-500 is only 4.21:1;
+      // slate-600 (#645047) is 6.5:1 and holds AA.
+      "inline-flex h-9 items-center justify-center rounded-lg bg-slate-100 p-1 text-slate-600",
       className
     )}
     {...props}

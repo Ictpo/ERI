@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   BarChart3,
@@ -16,7 +17,8 @@ import {
 } from "lucide-react";
 import type { Analysis, AnalysisType, ProjectDetail } from "@/lib/types";
 import { cn, formatDate, formatNumber } from "@/lib/utils";
-import { AboutEri } from "@/components/about-eri";
+import { langLabel, ranOnEarlierCorpus } from "@/lib/params";
+import { MadeBy } from "@/components/made-by";
 import { PlainModeToggle } from "@/components/ui/plain-mode-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -25,6 +27,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { ProgressMap } from "./workspace";
+import { ConfirmDialog } from "./confirm-dialog";
 
 export const ANALYSIS_META: Record<
   AnalysisType,
@@ -58,6 +61,7 @@ export function Sidebar({
   openAnalysisId,
   onOpenAnalysis,
   onDeleteAnalysis,
+  confirmLeave = false,
 }: {
   project: ProjectDetail;
   analyses: Analysis[];
@@ -65,8 +69,12 @@ export function Sidebar({
   openAnalysisId: string | null;
   onOpenAnalysis: (id: string) => void;
   onDeleteAnalysis: (id: string) => void;
+  /** Ask before leaving the project (the center pane has unsaved corpus work). */
+  confirmLeave?: boolean;
 }) {
   const [collapsed, setCollapsed] = React.useState(false);
+  const [leaveOpen, setLeaveOpen] = React.useState(false);
+  const router = useRouter();
   const summary = project.corpus_summary;
 
   if (collapsed) {
@@ -97,6 +105,11 @@ export function Sidebar({
           <TooltipTrigger asChild>
             <Link
               href="/"
+              onClick={(e) => {
+                if (!confirmLeave) return;
+                e.preventDefault();
+                setLeaveOpen(true);
+              }}
               className="rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900"
               aria-label="Back to projects"
             >
@@ -184,7 +197,10 @@ export function Sidebar({
                       <StatusDot status={analysis.status} />
                     </span>
                     <span className="mt-0.5 block pl-6 text-[11px] text-slate-400">
-                      {formatDate(analysis.created_at)}
+                      {formatDate(analysis.created_at)} · {langLabel(analysis)}
+                      {ranOnEarlierCorpus(analysis, summary) && (
+                        <span className="text-amber-700"> · earlier corpus</span>
+                      )}
                     </span>
                     {inFlight && event && (
                       <span className="mt-1.5 block pl-6">
@@ -224,14 +240,25 @@ export function Sidebar({
           Click an analysis to open its result
         </p>
         <div className="mt-2 flex items-center justify-between gap-2 px-1">
-          <div className="flex items-center gap-1.5">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/eri-mark.png" alt="" className="h-4 w-4 rounded-full" />
-            <AboutEri />
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/eri-mark.png" alt="" className="h-4 w-4 rounded-full" />
           <PlainModeToggle />
         </div>
+        {/* Its own row: the credit is too long to share a 260px line with
+            the plain-mode toggle without both wrapping. */}
+        <MadeBy className="mt-2 block px-1 text-xs" />
       </div>
+      <ConfirmDialog
+        open={leaveOpen}
+        title="Leave this project?"
+        description="The corpus in the center pane has unsaved changes. Leaving the project discards them."
+        confirmLabel="Leave"
+        onConfirm={() => {
+          setLeaveOpen(false);
+          router.push("/");
+        }}
+        onCancel={() => setLeaveOpen(false)}
+      />
     </aside>
   );
 }

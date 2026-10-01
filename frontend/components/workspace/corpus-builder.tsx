@@ -43,6 +43,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Pager } from "./pager";
+import { ConfirmDialog } from "./confirm-dialog";
 
 type Step =
   | { kind: "pick" }
@@ -50,16 +52,23 @@ type Step =
   | { kind: "uploading" }
   | { kind: "edit"; preview: CorpusPreview };
 
+// Review-table rows rendered at once. A 30 MB survey CSV can hold 100k rows;
+// rendering them all (one input per variable each) freezes the window.
+const PAGE_SIZE = 100;
+
 export function CorpusBuilder({
   projectId,
   hasExistingCorpus,
   onSaved,
   onCancel,
+  onDirtyChange,
 }: {
   projectId: string;
   hasExistingCorpus: boolean;
   onSaved: (summary: CorpusSummary) => void;
   onCancel?: () => void;
+  /** Reports whether the reviewed corpus holds unsaved edits. */
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const [step, setStep] = React.useState<Step>({ kind: "pick" });
   const [documents, setDocuments] = React.useState<DocumentIn[]>([]);
@@ -68,10 +77,21 @@ export function CorpusBuilder({
   const [dragOver, setDragOver] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [expandedDoc, setExpandedDoc] = React.useState<number | null>(null);
+  const [page, setPage] = React.useState(0);
   const [addVarOpen, setAddVarOpen] = React.useState(false);
   const [newVarName, setNewVarName] = React.useState("");
   const [csvColumn, setCsvColumn] = React.useState<string>("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [confirmNewFile, setConfirmNewFile] = React.useState(false);
+
+  // Unsaved edits: every edit replaces `documents`/`variables` with a new
+  // array, so they differ from the preview's own arrays once anything changed.
+  const dirty =
+    step.kind === "edit" &&
+    (documents !== step.preview.documents ||
+      variables !== step.preview.detected_variables);
+  React.useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  React.useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   async function handleFile(file: File) {
     const name = file.name.toLowerCase();
@@ -114,6 +134,7 @@ export function CorpusBuilder({
       setDocuments(preview.documents);
       setVariables(preview.detected_variables);
       setWarnings(preview.warnings);
+      setPage(0);
       setStep({ kind: "edit", preview });
     } catch (err) {
       toastError(err, "Could not preview the corpus");
@@ -314,6 +335,10 @@ export function CorpusBuilder({
   }
 
   // ---- Step: edit preview ----
+  const pageCount = Math.max(1, Math.ceil(documents.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const start = currentPage * PAGE_SIZE;
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -326,7 +351,12 @@ export function CorpusBuilder({
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setStep({ kind: "pick" })}>
+          <Button
+            variant="outline"
+            onClick={() =>
+              dirty ? setConfirmNewFile(true) : setStep({ kind: "pick" })
+            }
+          >
             <Upload /> Different file
           </Button>
           <Button
@@ -390,7 +420,9 @@ export function CorpusBuilder({
               </tr>
             </thead>
             <tbody>
-              {documents.map((doc, index) => (
+              {documents.slice(start, start + PAGE_SIZE).map((doc, offset) => {
+                const index = start + offset;
+                return (
                 <tr key={index} className="group hover:bg-slate-50/60">
                   <td className="border-b border-slate-100 px-3 py-2 text-xs text-slate-400">
                     {index + 1}
@@ -430,7 +462,8 @@ export function CorpusBuilder({
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {documents.length === 0 && (
                 <tr>
                   <td
@@ -445,6 +478,13 @@ export function CorpusBuilder({
           </table>
         </div>
       </Card>
+      <Pager
+        page={currentPage}
+        pageCount={pageCount}
+        total={documents.length}
+        pageSize={PAGE_SIZE}
+        onPage={setPage}
+      />
 
       {/* Full-text dialog */}
       <Dialog
@@ -514,6 +554,18 @@ export function CorpusBuilder({
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={confirmNewFile}
+        title="Discard your edits?"
+        description="The changes you made to this corpus preview are not saved. Choosing a different file discards them."
+        confirmLabel="Discard"
+        onConfirm={() => {
+          setConfirmNewFile(false);
+          setStep({ kind: "pick" });
+        }}
+        onCancel={() => setConfirmNewFile(false)}
+      />
     </div>
   );
 }

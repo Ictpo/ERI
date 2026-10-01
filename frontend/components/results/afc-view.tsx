@@ -12,6 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { ExportDialog } from "./export-dialog";
+import { declutterLabels } from "@/lib/declutter";
 
 const WIDTH = 720;
 const HEIGHT = 520;
@@ -62,125 +63,6 @@ type Placed = {
       draw a leader line back to the marker so the two stay visually linked. */
   displaced?: boolean;
 };
-
-const DISPLACED_EPS = 1.5; // px — below this, don't bother with a leader line
-
-type LabelBox = {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  baseline: number;
-  kind: "word" | "modality";
-  x0: number;
-  y0: number;
-};
-
-/** Separate overlapping boxes within `group`, holding `fixed` boxes still.
-    Movable boxes push apart 50/50; a movable box pushed against a fixed one
-    absorbs the whole nudge. Returns true if anything still overlapped. */
-function relax(
-  group: LabelBox[],
-  fixed: LabelBox[],
-  minGap: number,
-  clamp: (b: LabelBox) => void,
-  iterations: number
-) {
-  const all = [...group, ...fixed];
-  const movable = new Set(group);
-  for (let iter = 0; iter < iterations; iter++) {
-    let moved = false;
-    for (let i = 0; i < all.length; i++) {
-      for (let j = i + 1; j < all.length; j++) {
-        const a = all[i];
-        const b = all[j];
-        const aMov = movable.has(a);
-        const bMov = movable.has(b);
-        if (!aMov && !bMov) continue;
-        const ox =
-          Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) + minGap;
-        const oy =
-          Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) + minGap;
-        if (ox <= 0 || oy <= 0) continue;
-        const share = aMov && bMov ? 0.5 : 1;
-        const moveA = aMov ? share : 0;
-        const moveB = bMov ? share : 0;
-        moved = true;
-        if (ox < oy) {
-          let dir = a.x + a.w / 2 < b.x + b.w / 2 ? -1 : 1;
-          if (Math.abs(a.x + a.w / 2 - (b.x + b.w / 2)) < 0.5)
-            dir = (i + j) % 2 ? 1 : -1; // coincident centers: deterministic split
-          a.x += dir * ox * moveA;
-          b.x -= dir * ox * moveB;
-        } else {
-          let dir = a.y + a.h / 2 < b.y + b.h / 2 ? -1 : 1;
-          if (Math.abs(a.y + a.h / 2 - (b.y + b.h / 2)) < 0.5)
-            dir = (i + j) % 2 ? 1 : -1;
-          a.y += dir * oy * moveA;
-          b.y -= dir * oy * moveB;
-        }
-      }
-    }
-    for (const box of group) clamp(box);
-    if (!moved) return false;
-  }
-  return true;
-}
-
-/**
- * Resolve label overlaps with minimal movement, in two phases that match
- * the requirement "variables are the most stable — they move only when they
- * collide with each other; words move around them":
- *   Phase 1 — settle variable-modality labels against each other only.
- *   Phase 2 — freeze the modalities and flow the word labels around them.
- * Markers never move; only the label text is repositioned.
- */
-function declutterLabels(
-  items: { px: number; py: number; kind: "word" | "modality"; text: string }[],
-  minGap: number,
-  boundsW: number,
-  boundsH: number
-): { lx: number; ly: number; displaced: boolean }[] {
-  const boxes: LabelBox[] = items.map((it) => {
-    const fs = it.kind === "word" ? 9 : 11;
-    const offX = it.kind === "word" ? 5 : 8;
-    const baseline = it.kind === "word" ? 3 : 4;
-    const h = fs * 1.2;
-    return {
-      x: it.px + offX,
-      y: it.py + baseline - h * 0.75,
-      w: Math.max(8, it.text.length * fs * (it.kind === "word" ? 0.55 : 0.62)),
-      h,
-      baseline: h * 0.75,
-      kind: it.kind,
-      x0: it.px + offX,
-      y0: it.py + baseline,
-    };
-  });
-  const clampBox = (box: LabelBox) => {
-    box.x = Math.max(2, Math.min(boundsW - box.w - 2, box.x));
-    box.y = Math.max(
-      10 - box.baseline,
-      Math.min(boundsH - 4 - box.baseline, box.y)
-    );
-  };
-  const modalities = boxes.filter((b) => b.kind === "modality");
-  const words = boxes.filter((b) => b.kind === "word");
-
-  // Phase 1: modalities settle among themselves (nothing else moves).
-  relax(modalities, [], minGap, clampBox, 400);
-  // Phase 2: words flow around the now-fixed modalities and each other.
-  relax(words, modalities, minGap, clampBox, 1200);
-
-  return boxes.map((box) => {
-    const lx = box.x;
-    const ly = box.y + box.baseline;
-    const displaced =
-      Math.abs(lx - box.x0) > DISPLACED_EPS ||
-      Math.abs(ly - box.y0) > DISPLACED_EPS;
-    return { lx, ly, displaced };
-  });
-}
 
 /** Markers + labels for a set of positioned points (shared by the live
     plot and the offscreen export plot). */
@@ -344,14 +226,28 @@ export function AfcView({ result }: { result: AfcResult }) {
     const yExtent = ys.length ? [Math.min(...ys), Math.max(...ys)] : [-1, 1];
     const padX = (xExtent[1] - xExtent[0] || 1) * 0.08;
     const padY = (yExtent[1] - yExtent[0] || 1) * 0.08;
+    // A CA map in principal coordinates must have aspect ratio 1: one unit is
+    // the same length on both axes, or distances and angles are distorted.
+    // Fit whichever padded span is tighter for the frame, then widen the other
+    // domain around its centre so px-per-unit is identical on x and y.
+    const plotW = WIDTH - MARGIN.left - MARGIN.right;
+    const plotH = HEIGHT - MARGIN.top - MARGIN.bottom;
+    const unit = Math.min(
+      plotW / (xExtent[1] - xExtent[0] + 2 * padX),
+      plotH / (yExtent[1] - yExtent[0] + 2 * padY)
+    ); // px per CA unit, shared by both axes
+    const cx = (xExtent[0] + xExtent[1]) / 2;
+    const cy = (yExtent[0] + yExtent[1]) / 2;
+    const halfX = plotW / unit / 2;
+    const halfY = plotH / unit / 2;
     return {
       xScale: d3
         .scaleLinear()
-        .domain([xExtent[0] - padX, xExtent[1] + padX])
+        .domain([cx - halfX, cx + halfX])
         .range([MARGIN.left, WIDTH - MARGIN.right]),
       yScale: d3
         .scaleLinear()
-        .domain([yExtent[0] - padY, yExtent[1] + padY])
+        .domain([cy - halfY, cy + halfY])
         .range([HEIGHT - MARGIN.bottom, MARGIN.top]),
     };
   }, [points]);
@@ -397,6 +293,8 @@ export function AfcView({ result }: { result: AfcResult }) {
   const eW = WIDTH;
   const eH = HEIGHT;
   const exportPlaced: Placed[] = React.useMemo(() => {
+    // Only the Download preview needs this; skip the declutter until it opens.
+    if (!exportOpen) return [];
     const base = visiblePoints.map(({ point, kind, vx, vy }) => ({
       point,
       kind,
@@ -423,7 +321,7 @@ export function AfcView({ result }: { result: AfcResult }) {
       ly: labels[i].ly,
       displaced: labels[i].displaced,
     }));
-  }, [visiblePoints, xScale, yScale, minGap, eW, eH]);
+  }, [exportOpen, visiblePoints, xScale, yScale, minGap, eW, eH]);
 
   const explainedX = result.explained[ax]?.toFixed(1) ?? "?";
   const explainedY = result.explained[ay]?.toFixed(1) ?? "?";
@@ -581,12 +479,16 @@ export function AfcView({ result }: { result: AfcResult }) {
                 </span>
               </p>
               <p className="tabular-nums text-slate-500">
-                x {hover.point.x.toFixed(3)} · y {hover.point.y.toFixed(3)}
-                {hover.point.z !== null && <> · z {hover.point.z.toFixed(3)}</>}
+                axis 1 {hover.point.x.toFixed(3)} · axis 2{" "}
+                {hover.point.y.toFixed(3)}
+                {hover.point.z !== null && <> · axis 3 {hover.point.z.toFixed(3)}</>}
               </p>
               <p className="tabular-nums text-slate-500">
-                contrib x {hover.point.contrib_x.toFixed(1)}% · y{" "}
+                contrib axis 1 {hover.point.contrib_x.toFixed(1)}% · axis 2{" "}
                 {hover.point.contrib_y.toFixed(1)}%
+                {hover.point.contrib_z != null && (
+                  <> · axis 3 {hover.point.contrib_z.toFixed(1)}%</>
+                )}
               </p>
               <p className="tabular-nums text-slate-500">
                 freq {hover.point.freq}

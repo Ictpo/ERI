@@ -1,18 +1,21 @@
 """Verifier suite: parsing, segmentation, and the math engine.
 
 Checks outputs against known algorithmic properties (CA orthogonality/inertia,
-chi-square symmetry, Jaccard bounds, class separation on a synthetic corpus).
+chi-square symmetry, Jaccard bounds, class separation on a synthetic corpus)
+and against known answers (Greenacre's published `smoke` CA, hand-computed
+2x2 and 2xV chi-square values).
 """
 import numpy as np
 import pytest
+from scipy.stats import chi2_contingency
 
 from app.nlp.corpus_parse import parse_txt, parse_csv
 from app.nlp.segment import segment_corpus
-from app.nlp.tokenize import TextParams, tokenize
+from app.nlp.tokenize import TextParams, raw_tokens, tokenize
 from app.analysis.ca import correspondence_analysis
-from app.analysis.matrix import build_segment_matrix
+from app.analysis.matrix import SegmentMatrix, build_segment_matrix
 from app.analysis.stats import run_stats
-from app.analysis.chd import run_chd
+from app.analysis.chd import _partition_chi2, _word_profile, run_chd
 from app.analysis.similarity import run_similarity
 from app.analysis.afc import run_afc
 from app.errors import AppError
@@ -82,6 +85,15 @@ def test_parse_csv_text_column():
     assert docs[0]["variables"] == {"sex": "f"}
 
 
+def test_parse_csv_semicolon_separator():
+    # pt-BR Excel saves "CSV" with ';' (',' is the decimal separator there).
+    raw = "texto;sexo\nolá, tudo bem;f\noutra resposta, mais longa;m\n".encode("utf-8")
+    docs, variables, _ = parse_csv(raw, "texto")
+    assert len(docs) == 2
+    assert variables == ["sexo"]
+    assert docs[0] == {"text": "olá, tudo bem", "variables": {"sexo": "f"}}
+
+
 # ---- tokenization / segmentation ----
 
 def test_tokenize_stopwords_and_lemmas():
@@ -89,6 +101,14 @@ def test_tokenize_stopwords_and_lemmas():
     forms = tokenize("The chefs are cooking the onions", p)
     assert "the" not in forms and "are" not in forms
     assert "chef" in forms  # lemmatized plural
+
+
+def test_french_elisions_are_split():
+    # "c'est", "qu'il", "jusqu'à" lose their clitics (stop-words); "l'école"
+    # counts as "école"; "aujourd'hui" is not an elision and stays whole.
+    p = TextParams.from_dict({**P, "lang": "fr", "lemmatize": False})
+    forms = tokenize("C'est l'école qu'il aime jusqu'à aujourd'hui", p)
+    assert forms == ["école", "aime", "aujourd'hui"]
 
 
 def test_underscored_tokens_survive_and_skip_lemmatization():
@@ -100,6 +120,15 @@ def test_underscored_tokens_survive_and_skip_lemmatization():
     assert "havaianas_" in forms          # trailing underscore preserved
     assert "casa" in forms                # normal words still lemmatized
     assert "havaiana" not in forms        # protected word was NOT lemmatized
+
+
+def test_decomposed_accents_are_normalized():
+    # NFD text (PDF extraction, macOS) carries combining accents, which `\w`
+    # does not match; without NFC "educação" splits into "educac", "a", "o".
+    nfc = "educa\u00e7\u00e3o"
+    nfd = "educac\u0327a\u0303o"
+    assert raw_tokens(nfd) == [nfc]
+    assert raw_tokens(f"{nfd} {nfc}") == [nfc, nfc]
 
 
 def test_segments_respect_target_size():
@@ -135,6 +164,48 @@ def test_ca_rejects_degenerate():
         correspondence_analysis(np.zeros((4, 4)))
 
 
+def test_ca_axes_orthogonal_and_inertia_is_chi2_over_n():
+    rng = np.random.default_rng(42)
+    N = rng.integers(1, 20, size=(15, 6)).astype(float)
+    ca = correspondence_analysis(N, n_axes=5)   # all min(15, 6) - 1 axes
+    total_inertia = chi2_contingency(N, correction=False)[0] / N.sum()
+    # Principal coordinates are mass-orthogonal: F' D F = diag(eigenvalues).
+    Fr = (ca.row_coords * ca.row_mass[:, None]).T @ ca.row_coords
+    Fc = (ca.col_coords * ca.col_mass[:, None]).T @ ca.col_coords
+    eig = np.diag(Fr)
+    assert np.allclose(Fr, np.diag(eig), atol=1e-12)
+    assert np.allclose(Fc, Fr, atol=1e-12)
+    # With every axis kept, the eigenvalues add up to chi2 / N, and
+    # "explained" is each eigenvalue over that total.
+    assert eig.sum() == pytest.approx(total_inertia, rel=1e-9)
+    assert np.allclose(ca.explained, eig / total_inertia, atol=1e-12)
+
+
+def test_ca_is_symmetric_under_transpose():
+    rng = np.random.default_rng(5)
+    N = rng.integers(1, 20, size=(9, 5)).astype(float)
+    ca = correspondence_analysis(N, n_axes=3)
+    ca_t = correspondence_analysis(N.T, n_axes=3)
+    assert np.allclose(ca.explained, ca_t.explained, atol=1e-12)
+    # Rows of N.T are the columns of N (axis signs are arbitrary in an SVD).
+    assert np.allclose(np.abs(ca_t.row_coords), np.abs(ca.col_coords), atol=1e-10)
+    assert np.allclose(np.abs(ca_t.col_coords), np.abs(ca.row_coords), atol=1e-10)
+
+
+# Greenacre's staff-group x smoking table (R package `ca`, dataset `smoke`).
+SMOKE = np.array([[4, 2, 3, 2], [4, 3, 7, 4], [25, 10, 12, 4],
+                  [18, 24, 33, 13], [10, 6, 7, 2]], dtype=float)
+
+
+def test_ca_matches_published_smoke_example():
+    # Published principal inertias 0.074759 / 0.010017 / 0.000414
+    # (87.76% / 11.76% / 0.49%); total 0.08519 = chi2 16.442 / n 193.
+    ca = correspondence_analysis(SMOKE, n_axes=3)
+    Fr = (ca.row_coords * ca.row_mass[:, None]).T @ ca.row_coords
+    assert np.allclose(np.diag(Fr), [0.074759, 0.010017, 0.000414], atol=2e-6)
+    assert np.allclose(ca.explained, [0.8776, 0.1176, 0.0049], atol=2e-4)
+
+
 # ---- stats ----
 
 def test_stats_hapax_and_freq():
@@ -144,6 +215,14 @@ def test_stats_hapax_and_freq():
     assert r["freq"][0]["freq"] >= r["freq"][-1]["freq"]
     assert all(f["freq"] == 1 for f in [x for x in r["freq"] if x["form"] in r["hapax"]])
     assert {b["variable"] for b in r["by_variable"]} == {"theme"}
+
+
+def test_stats_by_variable_tokens_are_running_words():
+    # Same basis as total_tokens: every document carries "theme", so the
+    # per-modality token counts must add up to the corpus total.
+    texts, docs = bi_corpus(4)
+    r = run_stats(texts, docs, P)
+    assert sum(b["tokens"] for b in r["by_variable"]) == r["total_tokens"]
 
 
 # ---- CHD ----
@@ -178,18 +257,42 @@ def test_chd_too_small_corpus_raises_friendly():
     assert e.value.hint  # actionable hint present
 
 
+def test_partition_chi2_symmetric_and_matches_scipy():
+    rng = np.random.default_rng(3)
+    c1 = rng.integers(1, 30, size=12).astype(float)
+    c2 = rng.integers(1, 30, size=12).astype(float)
+    ref = chi2_contingency(np.vstack([c1, c2]), correction=False)[0]
+    assert _partition_chi2(c1, c2) == pytest.approx(ref, rel=1e-12)
+    assert _partition_chi2(c2, c1) == pytest.approx(ref, rel=1e-12)
+
+
+def test_word_profile_chi2_known_answer():
+    # 20 segments, the first 10 in the class. Form "a" is in 8 in-class and
+    # 2 out-of-class segments: table [[8, 2], [2, 8]], so without Yates
+    # chi2 = 20 * (8*8 - 2*2)**2 / (10*10*10*10) = 7.2 (Yates would give 5.0).
+    X = np.zeros((20, 2))
+    X[:8, 0] = 1
+    X[10:12, 0] = 1
+    X[:, 1] = 1  # "b" is in every segment, so it is never over-represented
+    sm = SegmentMatrix(X, ["a", "b"], X.sum(axis=0), [], [], 20)
+    words = _word_profile(np.arange(20) < 10, sm)
+    assert [w["form"] for w in words] == ["a"]
+    assert words[0]["chi2"] == pytest.approx(7.2)
+    assert words[0]["freq_in"] == 8 and words[0]["freq_total"] == 10
+
+
 # ---- similarity ----
 
 def test_similarity_metrics_bounds_and_communities():
     texts, docs = bi_corpus(8)
-    r = run_similarity(texts, docs, {**P, "max_terms": 40})
+    r = run_similarity(texts, docs, {**P, "max_terms": 200})  # every active form
     assert r["nodes"] and r["edges"]
     for e in r["edges"]:
         assert 0 <= e["jaccard"] <= 1 and 0 <= e["cosine"] <= 1 and e["cooc"] >= 2
     comm = {n["id"]: n["community"] for n in r["nodes"]}
     # cooking and astronomy vocab should land in different communities
-    if "sauce" in comm and "galaxy" in comm:
-        assert comm["sauce"] != comm["galaxy"]
+    assert "sauce" in comm and "galaxy" in comm
+    assert comm["sauce"] != comm["galaxy"]
 
 
 # ---- AFC ----
@@ -202,8 +305,21 @@ def test_afc_separates_modalities():
     xs = [c["x"] for c in r["cols"]]
     assert xs[0] * xs[1] < 0  # the two modalities oppose on axis 1
     words = {p["label"]: p for p in r["rows"]}
-    if "sauce" in words and "galaxy" in words:
-        assert words["sauce"]["x"] * words["galaxy"]["x"] < 0
+    assert "sauce" in words and "galaxy" in words
+    assert words["sauce"]["x"] * words["galaxy"]["x"] < 0
+
+
+def test_afc_reports_axis3_contributions():
+    # With > 3 modalities there is a third axis; its contributions must be
+    # emitted (the 1x3 / 2x3 views need them) and sum to 100% like any axis.
+    texts, docs = bi_corpus(12)
+    for i, d in enumerate(docs):
+        d["variables"]["grp"] = f"g{i % 4}"
+    r = run_afc(texts, docs, {**P, "variable": "grp"})
+    assert len(r["explained"]) == 3
+    for pts in (r["rows"], r["cols"]):
+        assert all(p["contrib_z"] is not None for p in pts)
+        assert sum(p["contrib_z"] for p in pts) == pytest.approx(100, abs=1)
 
 
 def test_afc_missing_variable_raises_friendly():

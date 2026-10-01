@@ -10,13 +10,15 @@ TXT without `****` markers falls back to splitting on blank-line groups.
 """
 from __future__ import annotations
 
+import csv
 import io
 import re
 
-import pandas as pd
+from ..errors import AppError
 
 _STAR_LINE = re.compile(r"^\s*\*{4}")
 _TAG = re.compile(r"\*([^\s*]+)")
+_CSV_SEPARATORS = (",", ";", "\t")
 
 
 def _parse_tags(line: str) -> dict[str, str]:
@@ -86,6 +88,42 @@ def parse_txt(content: str) -> tuple[list[dict], list[str], list[str]]:
     return documents, detected, warnings
 
 
+def _column_names(header: list[str]) -> list[str]:
+    """Header cells as column names. Blank ones become 'Unnamed: i' and
+    repeats get '.1', '.2' suffixes (the names pandas gave them), so two
+    columns with one name no longer overwrite each other."""
+    names: list[str] = []
+    for i, cell in enumerate(header):
+        base = cell or f"Unnamed: {i}"
+        name, dup = base, 0
+        while name in names:
+            dup += 1
+            name = f"{base}.{dup}"
+        names.append(name)
+    return names
+
+
+def _detect_separator(text: str) -> str:
+    """Pick the CSV separator (',', ';' or tab) from the header record.
+
+    Excel in pt-BR (and fr/es) locales saves "CSV" with ';', because ',' is
+    the decimal separator there. Column names rarely contain a separator, so
+    the header row decides; a single-column file or a tie falls back to ','.
+    """
+    counts = dict.fromkeys(_CSV_SEPARATORS, 0)
+    in_quotes = False
+    for ch in text[:65536]:
+        if ch == '"':
+            in_quotes = not in_quotes
+        elif not in_quotes:
+            if ch in "\r\n":
+                break
+            if ch in counts:
+                counts[ch] += 1
+    best = max(_CSV_SEPARATORS, key=counts.__getitem__)
+    return best if counts[best] else ","
+
+
 def parse_csv(content: bytes, text_column: str | None, encoding: str = "utf-8") -> tuple[list[dict], list[str], list[str]]:
     warnings: list[str] = []
     # utf-8-sig transparently strips a UTF-8 BOM (common in Excel/Windows CSV
@@ -93,29 +131,49 @@ def parse_csv(content: bytes, text_column: str | None, encoding: str = "utf-8") 
     if encoding.lower().replace("-", "") in ("utf8", "utf8sig"):
         encoding = "utf-8-sig"
     try:
-        df = pd.read_csv(io.BytesIO(content), encoding=encoding, dtype=str, keep_default_na=False)
+        decoded = content.decode(encoding)
     except UnicodeDecodeError:
-        df = pd.read_csv(io.BytesIO(content), encoding="latin-1", dtype=str, keep_default_na=False)
+        decoded = content.decode("latin-1")
         warnings.append("File was not valid UTF-8; decoded as Latin-1 instead.")
-    if df.empty or not len(df.columns):
+    # A whole interview in one cell can exceed csv's default 128 KB field limit.
+    csv.field_size_limit(max(csv.field_size_limit(), len(decoded) + 1))
+    sep = _detect_separator(decoded)
+    try:
+        rows = [row for row in csv.reader(io.StringIO(decoded, newline=""), delimiter=sep) if row]
+    except csv.Error as exc:
+        raise AppError("csv_unreadable", f"The CSV file could not be read ({exc}).",
+                       "Save it again from your spreadsheet as CSV (comma- or semicolon-separated).") from exc
+    if len(rows) < 2:
         return [], [], ["The CSV file has no rows."]
+    columns = _column_names(rows[0])
+    data: list[list[str]] = []
+    for number, row in enumerate(rows[1:], start=1):
+        if len(row) > len(columns):
+            raise AppError(
+                "csv_malformed",
+                f"Row {number} of the CSV has {len(row)} fields but the header has {len(columns)}.",
+                f"Check that every row uses the header's separator ({'tab' if sep == chr(9) else repr(sep)}) "
+                "and that text containing it is in quotes.",
+            )
+        data.append(row + [""] * (len(columns) - len(row)))  # short rows: empty cells
+    col = {c: i for i, c in enumerate(columns)}
 
-    if text_column is None or text_column not in df.columns:
+    if text_column is None or text_column not in col:
         # Heuristic: the column with the longest average cell content.
-        text_column = max(df.columns, key=lambda c: df[c].astype(str).str.len().mean())
+        text_column = max(columns, key=lambda c: sum(len(r[col[c]]) for r in data) / len(data))
         warnings.append(f"No text column specified; using '{text_column}' (longest average content).")
 
-    var_cols = [c for c in df.columns if c != text_column]
+    var_cols = [c for c in columns if c != text_column]
     documents = []
     skipped = 0
-    for _, row in df.iterrows():
-        text = str(row[text_column]).strip()
+    for row in data:
+        text = row[col[text_column]].strip()
         if not text:
             skipped += 1
             continue
         documents.append({
             "text": text,
-            "variables": {c: str(row[c]).strip() for c in var_cols if str(row[c]).strip()},
+            "variables": {c: row[col[c]].strip() for c in var_cols if row[col[c]].strip()},
         })
     if skipped:
         warnings.append(f"{skipped} row(s) with an empty text cell were skipped.")

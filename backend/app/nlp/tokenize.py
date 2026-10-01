@@ -7,6 +7,7 @@ for a token, the surface form is kept.
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 
 from .stopwords import stopwords_for
@@ -31,6 +32,22 @@ SUPPORTED_LANGS = ("en", "pt", "fr", "es")
 # matching the classic Iramuteq convention.
 _WORD_RE = re.compile(r"[^\W\d]+(?:['’_-][^\W\d]+)*", re.UNICODE)
 
+# French elision: split the elided clitic off its host word ("c'est" -> "c",
+# "est"; "qu'il" -> "qu", "il"; "l'école" -> "l", "école") so the clitic can
+# be dropped as a stop-word and the host is counted with its bare form. Only
+# the classic clitics are split: "aujourd'hui" and "quelqu'un" stay whole.
+_FR_ELISION_RE = re.compile(r"^(c|d|j|l|m|n|s|t|qu|jusqu|lorsqu|puisqu|quoiqu)'(.+)$")
+
+
+def _split_elisions(tokens: list[str], lang: str) -> list[str]:
+    if lang != "fr":
+        return tokens
+    out: list[str] = []
+    for t in tokens:
+        m = _FR_ELISION_RE.match(t)
+        out.extend(m.groups() if m and "_" not in t else (t,))
+    return out
+
 
 @dataclass
 class TextParams:
@@ -49,12 +66,15 @@ class TextParams:
             lang=lang,
             lemmatize=bool(d.get("lemmatize", True)),
             remove_stopwords=bool(d.get("remove_stopwords", True)),
-            custom_stopwords=[str(w) for w in d.get("custom_stopwords", []) or []],
+            custom_stopwords=[unicodedata.normalize("NFC", str(w)) for w in d.get("custom_stopwords", []) or []],
             min_freq=max(1, int(d.get("min_freq", 3) or 1)),
         )
 
 
 def raw_tokens(text: str) -> list[str]:
+    # NFC first: decomposed accents (NFD, e.g. text from PDFs or macOS) are
+    # combining marks, which `\w` does not match, so "educação" would split.
+    text = unicodedata.normalize("NFC", text)
     return [m.group(0).lower().replace("’", "'") for m in _WORD_RE.finditer(text)]
 
 
@@ -62,7 +82,7 @@ def normalize_tokens(tokens: list[str], p: TextParams) -> list[str]:
     """Lowercased word tokens -> analysis forms (lemmas, stopwords removed)."""
     sw = stopwords_for(p.lang, p.custom_stopwords) if p.remove_stopwords else stopwords_for("", p.custom_stopwords)
     out = []
-    for t in tokens:
+    for t in _split_elisions(tokens, p.lang):
         if t in sw:
             continue
         # Underscored tokens are user-protected: never lemmatized.

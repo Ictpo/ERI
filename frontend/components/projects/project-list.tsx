@@ -116,10 +116,10 @@ export function ProjectList() {
       ) : loadFailed ? (
         <Card className="mx-auto max-w-md">
           <CardHeader>
-            <CardTitle>Could not reach the server</CardTitle>
+            <CardTitle>Could not load your projects</CardTitle>
             <CardDescription>
-              The project list could not be loaded. Make sure the backend is
-              running, then retry.
+              ERI&apos;s analysis engine did not respond. Retry, and if that
+              does not help, close ERI and open it again.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -198,6 +198,7 @@ export function ProjectList() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Interview study 2026"
+                maxLength={120}
                 autoFocus
                 required
               />

@@ -1,7 +1,7 @@
 # ERI: Engine for Reinert Insights — API Contract (v1)
 
 Backend: FastAPI at `http://localhost:8000`. All routes prefixed `/api`.
-Frontend: Next.js at `http://localhost:3000`, reads `NEXT_PUBLIC_API_URL` (default `http://localhost:8000`).
+Frontend: calls the API on the page's own origin, or `http://localhost:8000` when served by the Next.js dev server on :3000 (`NEXT_PUBLIC_API_URL` overrides this in `next dev` only — builds ignore it).
 All bodies JSON unless noted. Errors: every non-2xx returns `{ "error": { "code": string, "message": string, "hint": string | null } }` — `message`/`hint` are human-readable and must be shown in a toast.
 
 ## Projects
@@ -13,7 +13,7 @@ All bodies JSON unless noted. Errors: every non-2xx returns `{ "error": { "code"
 
 ```ts
 type Project = { id: string; name: string; description: string; created_at: string };
-type CorpusSummary = { n_documents: number; n_tokens: number; n_forms: number; variables: { name: string; modalities: string[] }[] };
+type CorpusSummary = { n_documents: number; n_tokens: number; n_forms: number; variables: { name: string; modalities: string[] }[]; saved_at?: string /* UTC ISO time of the last PUT /corpus; absent for older corpora */ };
 ```
 
 ## Corpus
@@ -77,7 +77,7 @@ type StatsResult = {
 
 ```ts
 type ChdResult = {
-  n_segments: number; n_classified: number; pct_classified: number;
+  n_segments: number; n_classified: number; pct_classified: number; // % of segments with >= 1 active form; NOT Iramuteq's retention rate
   tree: ChdNode; // binary tree of splits; leaves carry class_id
   classes: ChdClass[];
 };
@@ -110,7 +110,18 @@ type AfcResult = {
   rows: AfcPoint[];                        // words
   cols: AfcPoint[];                        // variable modalities
 };
-type AfcPoint = { label: string; x: number; y: number; z: number | null; mass: number; contrib_x: number; contrib_y: number; freq: number };
+type AfcPoint = { label: string; x: number; y: number; z: number | null; mass: number; contrib_x: number; contrib_y: number; contrib_z: number | null; freq: number }; // x,y,z and contrib_x,y,z refer to axes 1, 2, 3; z/contrib_z are null without a 3rd axis
+```
+
+## Settings
+
+App-wide UI preferences, stored in the local database (the desktop webview keeps no localStorage between launches).
+
+- `GET /api/settings` → `Settings`
+- `PUT /api/settings` `Settings` → `Settings`
+
+```ts
+type Settings = { plain_mode: boolean };
 ```
 
 ## Health

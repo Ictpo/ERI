@@ -24,7 +24,7 @@ def run_similarity(doc_texts: list[str], docs: list[dict], params: dict,
 
     progress(0.4, "Computing co-occurrence matrix")
     seg_count = X.sum(axis=0)                 # segments containing each form
-    C = X.T @ X                               # co-occurrence (segment level)
+    C = (X.T @ X).toarray()                   # co-occurrence (segment level), max_terms²
 
     progress(0.6, "Deriving similarity metrics and communities")
     edges = []

@@ -68,6 +68,7 @@ def run_afc(doc_texts: list[str], docs: list[dict], params: dict,
                 "mass": round(float(mass[i]), 5),
                 "contrib_x": round(100 * float(contrib[i, 0]), 2),
                 "contrib_y": round(100 * float(contrib[i, 1]), 2) if k >= 2 else 0.0,
+                "contrib_z": round(100 * float(contrib[i, 2]), 2) if has_z else None,
                 "freq": int(freqs[i]),
             })
         return out

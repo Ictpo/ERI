@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { ChevronDown, Info, Play, RefreshCw } from "lucide-react";
-import type { AnalysisType, CorpusSummary, TextParams } from "@/lib/types";
+import type { Analysis, AnalysisType, CorpusSummary, TextParams } from "@/lib/types";
 import { cn, formatNumber } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -67,6 +67,28 @@ const DEFAULT_SHARED: SharedState = {
   min_freq: 3,
 };
 
+type StoredParams = Record<string, unknown> | undefined;
+
+function numFrom(p: StoredParams, key: string, fallback: number): number {
+  const v = p?.[key];
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+/** A card's text settings as stored with a past run, else the defaults. */
+function sharedFrom(p: StoredParams): SharedState {
+  const d = DEFAULT_SHARED;
+  const bool = (v: unknown, fallback: boolean) =>
+    typeof v === "boolean" ? v : fallback;
+  const stop = p?.custom_stopwords;
+  return {
+    lang: LANGS.find((l) => l.value === p?.lang)?.value ?? d.lang,
+    lemmatize: bool(p?.lemmatize, d.lemmatize),
+    remove_stopwords: bool(p?.remove_stopwords, d.remove_stopwords),
+    custom_stopwords: Array.isArray(stop) ? stop.join(", ") : d.custom_stopwords,
+    min_freq: numFrom(p, "min_freq", d.min_freq),
+  };
+}
+
 function buildTextParams(s: SharedState): TextParams {
   return {
     lang: s.lang,
@@ -78,6 +100,59 @@ function buildTextParams(s: SharedState): TextParams {
       .filter(Boolean),
     min_freq: s.min_freq,
   };
+}
+
+/**
+ * Whole-number input that lets the user finish typing. Clamping on every
+ * keystroke rewrote partial entries (typing "30" over "40" gave 100), so the
+ * draft is committed only while it is a whole number inside [min, max], and
+ * is clamped (or restored, if left empty) when the field loses focus.
+ */
+function NumberField({
+  id,
+  min,
+  max,
+  value,
+  onCommit,
+}: {
+  id: string;
+  min: number;
+  max?: number;
+  value: number;
+  onCommit: (value: number) => void;
+}) {
+  const [draft, setDraft] = React.useState(String(value));
+  const hi = max ?? Number.MAX_SAFE_INTEGER;
+  // Follow outside changes to `value` (e.g. settings seeded from a stored run)
+  // without disturbing an in-progress entry, which never changes `value`.
+  React.useEffect(() => {
+    setDraft((d) => (Number(d) === value ? d : String(value)));
+  }, [value]);
+  return (
+    <Input
+      id={id}
+      type="number"
+      min={min}
+      max={max}
+      step={1}
+      value={draft}
+      onChange={(e) => {
+        const raw = e.target.value;
+        setDraft(raw);
+        const n = Number(raw);
+        if (raw !== "" && Number.isInteger(n) && n >= min && n <= hi) onCommit(n);
+      }}
+      onBlur={() => {
+        const n = Math.round(Number(draft));
+        const next =
+          draft.trim() === "" || !Number.isFinite(n)
+            ? value
+            : Math.min(hi, Math.max(min, n));
+        setDraft(String(next));
+        onCommit(next);
+      }}
+    />
+  );
 }
 
 function SharedFields({
@@ -114,17 +189,11 @@ function SharedFields({
         </div>
         <div className="grid gap-2">
           <Label htmlFor={`${idPrefix}-min-freq`}>Minimum frequency</Label>
-          <Input
+          <NumberField
             id={`${idPrefix}-min-freq`}
-            type="number"
             min={1}
             value={state.min_freq}
-            onChange={(e) =>
-              onChange({
-                ...state,
-                min_freq: Math.max(1, Number(e.target.value) || 1),
-              })
-            }
+            onCommit={(min_freq) => onChange({ ...state, min_freq })}
           />
         </div>
       </div>
@@ -169,32 +238,53 @@ function SharedFields({
 
 export function AnalysisLauncher({
   corpusSummary,
+  history,
   onRun,
   onReplaceCorpus,
 }: {
   corpusSummary: CorpusSummary;
+  /** The project's analyses, newest first: each card starts from its last run. */
+  history: Analysis[];
   onRun: (type: AnalysisType, params: object) => Promise<void>;
   onReplaceCorpus: () => void;
 }) {
   const [expanded, setExpanded] = React.useState<AnalysisType | null>(null);
   const [launching, setLaunching] = React.useState(false);
 
+  // Seed each card from the params stored with its own last run, else from
+  // the newest run of any type (text settings only), so the settings, above
+  // all the language, survive leaving the launcher and relaunching the app.
+  const seed = (type: AnalysisType) =>
+    (history.find((a) => a.type === type) ?? history[0])?.params as StoredParams;
+
   // Per-type shared params (kept separate so each card remembers its config).
-  const [shared, setShared] = React.useState<Record<AnalysisType, SharedState>>({
-    stats: { ...DEFAULT_SHARED },
-    chd: { ...DEFAULT_SHARED },
-    similarity: { ...DEFAULT_SHARED },
-    afc: { ...DEFAULT_SHARED },
-  });
+  const [shared, setShared] = React.useState<Record<AnalysisType, SharedState>>(
+    () => ({
+      stats: sharedFrom(seed("stats")),
+      chd: sharedFrom(seed("chd")),
+      similarity: sharedFrom(seed("similarity")),
+      afc: sharedFrom(seed("afc")),
+    })
+  );
   // Type-specific params
-  const [maxCloudWords, setMaxCloudWords] = React.useState(150);
-  const [segSize, setSegSize] = React.useState(40);
-  const [maxClasses, setMaxClasses] = React.useState(6);
-  const [maxTerms, setMaxTerms] = React.useState(60);
+  const [maxCloudWords, setMaxCloudWords] = React.useState(() =>
+    numFrom(seed("stats"), "max_cloud_words", 150)
+  );
+  const [segSize, setSegSize] = React.useState(() =>
+    numFrom(seed("chd"), "seg_size", 40)
+  );
+  const [maxClasses, setMaxClasses] = React.useState(() =>
+    numFrom(seed("chd"), "max_classes", 6)
+  );
+  const [maxTerms, setMaxTerms] = React.useState(() =>
+    numFrom(seed("similarity"), "max_terms", 60)
+  );
   const [afcVariable, setAfcVariable] = React.useState<string>(
     corpusSummary.variables[0]?.name ?? ""
   );
-  const [afcMaxWords, setAfcMaxWords] = React.useState(120);
+  const [afcMaxWords, setAfcMaxWords] = React.useState(() =>
+    numFrom(seed("afc"), "max_words", 120)
+  );
 
   const hasVariables = corpusSummary.variables.length > 0;
 
@@ -305,17 +395,12 @@ export function AnalysisLauncher({
                   {type === "stats" && (
                     <div className="grid gap-2 sm:max-w-[240px]">
                       <Label htmlFor="stats-cloud-words">Max cloud words</Label>
-                      <Input
+                      <NumberField
                         id="stats-cloud-words"
-                        type="number"
                         min={10}
-                        max={500}
+                        max={300}
                         value={maxCloudWords}
-                        onChange={(e) =>
-                          setMaxCloudWords(
-                            Math.max(10, Number(e.target.value) || 150)
-                          )
-                        }
+                        onCommit={setMaxCloudWords}
                       />
                     </div>
                   )}
@@ -326,30 +411,22 @@ export function AnalysisLauncher({
                         <Label htmlFor="chd-seg-size">
                           Segment size (words)
                         </Label>
-                        <Input
+                        <NumberField
                           id="chd-seg-size"
-                          type="number"
                           min={10}
                           max={200}
                           value={segSize}
-                          onChange={(e) =>
-                            setSegSize(Math.max(10, Number(e.target.value) || 40))
-                          }
+                          onCommit={setSegSize}
                         />
                       </div>
                       <div className="grid gap-2">
                         <Label htmlFor="chd-max-classes">Max classes</Label>
-                        <Input
+                        <NumberField
                           id="chd-max-classes"
-                          type="number"
                           min={2}
-                          max={20}
+                          max={12}
                           value={maxClasses}
-                          onChange={(e) =>
-                            setMaxClasses(
-                              Math.max(2, Number(e.target.value) || 6)
-                            )
-                          }
+                          onCommit={setMaxClasses}
                         />
                       </div>
                     </div>
@@ -358,15 +435,12 @@ export function AnalysisLauncher({
                   {type === "similarity" && (
                     <div className="grid gap-2 sm:max-w-[240px]">
                       <Label htmlFor="sim-max-terms">Max terms</Label>
-                      <Input
+                      <NumberField
                         id="sim-max-terms"
-                        type="number"
                         min={10}
-                        max={300}
+                        max={200}
                         value={maxTerms}
-                        onChange={(e) =>
-                          setMaxTerms(Math.max(10, Number(e.target.value) || 60))
-                        }
+                        onCommit={setMaxTerms}
                       />
                     </div>
                   )}
@@ -404,17 +478,12 @@ export function AnalysisLauncher({
                         </div>
                         <div className="grid gap-2">
                           <Label htmlFor="afc-max-words">Max words</Label>
-                          <Input
+                          <NumberField
                             id="afc-max-words"
-                            type="number"
                             min={10}
-                            max={500}
+                            max={400}
                             value={afcMaxWords}
-                            onChange={(e) =>
-                              setAfcMaxWords(
-                                Math.max(10, Number(e.target.value) || 120)
-                              )
-                            }
+                            onCommit={setAfcMaxWords}
                           />
                         </div>
                       </div>

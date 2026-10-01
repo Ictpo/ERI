@@ -17,7 +17,7 @@ const newsreader = Newsreader({
 });
 
 export const metadata: Metadata = {
-  title: "ERI — Hear the pattern beneath the noise",
+  title: "ERI: Engine for Reinert Insights",
   description:
     "Statistical text analysis: word statistics, Reinert classification, similarity networks and correspondence analysis.",
   icons: {

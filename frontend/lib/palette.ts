@@ -1,6 +1,7 @@
 /**
  * Shared categorical palette (Okabe-Ito, colorblind-friendly).
- * Used consistently for CHD classes, network communities and AFC markers.
+ * Used for CHD classes, similarity-network communities and word-cloud words.
+ * AFC markers do NOT use it: they have their own colours in afc-view.tsx.
  */
 export const PALETTE = [
   "#E69F00", // orange

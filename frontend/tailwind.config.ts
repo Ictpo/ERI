@@ -42,16 +42,18 @@ const config: Config = {
         // │ cold slate of stock UI"; overriding the scale rewarms every   │
         // │ existing slate-* class with no component edits.               │
         // │                                                               │
-        // │ Every step is pinned to Tailwind slate's ORIGINAL lightness   │
-        // │ (L*), so all pre-existing contrast decisions survive — only   │
-        // │ the hue moves. 50/100/200/900 are the identity's published    │
-        // │ Paper/Surface/Border/Ink verbatim.                            │
+        // │ Only the hue was meant to move, but the steps are NOT all at  │
+        // │ stock lightness (L*): 50/100/200/900 are the identity's       │
+        // │ published Paper/Surface/Border/Ink hex, darker than stock     │
+        // │ (L* 97.2/93.9/89.6 vs 98.2/96.4/91.8), so contrast checked on │
+        // │ stock slate does NOT carry over. Re-check text on 100/200.    │
         // │                                                               │
         // │ 500 deviates deliberately: the published Muted #8C7A72 is     │
         // │ 3.81:1 on Paper — under the 4.5:1 AA floor, and slate-500 is  │
         // │ used for body-secondary text all over the app. #7F6D65 is the │
-        // │ same hue at slate-500's lightness => 4.57:1. Accessibility    │
-        // │ wins over an exact token match.                               │
+        // │ same hue at slate-500's lightness => 4.57:1 on Paper (50),    │
+        // │ but only 4.21:1 on Surface (100): text on slate-100 uses 600. │
+        // │ Accessibility wins over an exact token match.                 │
         // └───────────────────────────────────────────────────────────────┘
         slate: {
           50: "#FBF6F2", // Paper    (identity)
@@ -59,7 +61,7 @@ const config: Config = {
           200: "#ECDFD6", // Border   (identity)
           300: "#E3D0C8",
           400: "#B79C91",
-          500: "#7F6D65", // Muted, darkened to hold AA (see above)
+          500: "#7F6D65", // Muted, darkened: AA on Paper/white, not on slate-100 (see above)
           600: "#645047",
           700: "#4C3D36",
           800: "#312621",

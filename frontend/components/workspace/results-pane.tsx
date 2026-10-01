@@ -9,6 +9,7 @@ import type {
   Analysis,
   AnalysisEvent,
   ChdResult,
+  CorpusSummary,
   SimilarityResult,
   StatsResult,
 } from "@/lib/types";
@@ -17,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { ANALYSIS_META } from "./sidebar";
 import { formatDate } from "@/lib/utils";
+import { describeParams, ranOnEarlierCorpus } from "@/lib/params";
 
 const StatsView = dynamic(
   () => import("@/components/results/stats-view").then((m) => m.StatsView),
@@ -49,10 +51,16 @@ function ResultSkeleton() {
 export function ResultsPane({
   analysis,
   event,
+  corpus,
+  resultFailed = false,
   onRetryFetch,
 }: {
   analysis: Analysis | null;
   event?: AnalysisEvent;
+  /** The last fetch of this result failed (otherwise it is still loading). */
+  resultFailed?: boolean;
+  /** The project's current corpus, to flag results of an earlier one. */
+  corpus: CorpusSummary | null;
   onRetryFetch?: () => void;
 }) {
   if (!analysis) {
@@ -119,8 +127,9 @@ export function ResultsPane({
     );
   }
 
-  // done but result missing (e.g. fetch after done failed)
+  // Done but the result is not here yet: still loading, unless the fetch failed.
   if (!analysis.result) {
+    if (!resultFailed) return <ResultSkeleton />;
     return (
       <div className="flex h-full min-h-[320px] flex-col items-center justify-center text-center">
         <p className="font-medium text-slate-700">Result not loaded</p>
@@ -146,17 +155,34 @@ export function ResultsPane({
             ? formatDate(analysis.finished_at)
             : formatDate(analysis.created_at)}
         </p>
+        <p className="mt-1 text-xs text-slate-500">
+          {describeParams(analysis)}
+        </p>
+        {ranOnEarlierCorpus(analysis, corpus) && (
+          <p className="mt-1 text-xs text-amber-700">
+            Ran on an earlier version of the corpus, which has since been
+            replaced.
+          </p>
+        )}
       </div>
+      {/* Keyed by analysis id: another result of the same type must start
+          from fresh view state (axis pair, filters, selected class), or
+          state carried over from the previous result can empty the plot. */}
       {analysis.type === "stats" && (
-        <StatsView result={analysis.result as StatsResult} />
+        <StatsView key={analysis.id} result={analysis.result as StatsResult} />
       )}
       {analysis.type === "chd" && (
-        <ChdView result={analysis.result as ChdResult} />
+        <ChdView key={analysis.id} result={analysis.result as ChdResult} />
       )}
       {analysis.type === "similarity" && (
-        <SimilarityView result={analysis.result as SimilarityResult} />
+        <SimilarityView
+          key={analysis.id}
+          result={analysis.result as SimilarityResult}
+        />
       )}
-      {analysis.type === "afc" && <AfcView result={analysis.result as AfcResult} />}
+      {analysis.type === "afc" && (
+        <AfcView key={analysis.id} result={analysis.result as AfcResult} />
+      )}
     </div>
   );
 }

@@ -8,9 +8,14 @@ exports live on `window.ERI`.
 
 Components are pre-styled; you compose **layout** with Tailwind utility
 classes (the same vocabulary the components use internally). There is no
-separate theme object or style-prop system. The full compiled utility set is
-in `_ds_bundle.css` (reachable from `styles.css`). Read `styles.css` and its
-`@import` closure before styling.
+separate theme object or style-prop system.
+
+**`_ds_bundle.css` is NOT the full Tailwind utility set.** It is the app's own
+build output, so it contains only classes the app already uses somewhere. Any
+other utility — arbitrary values like `w-[360px]`, uncommon widths, heights,
+spacing steps, grid templates — silently does nothing. Before using a class,
+search `styles.css` and its `@import` closure for it; if it is not there, use
+an inline `style={{ ... }}` instead (e.g. `<Card style={{ width: 360 }}>`).
 
 Brand vocabulary actually used by these components:
 
@@ -62,7 +67,7 @@ Read each component's `<Name>.d.ts` for its exact props.
 import { Card, CardHeader, CardTitle, CardDescription, CardContent,
          CardFooter, Badge, Button } from "window.ERI";
 
-<Card className="w-[360px]">
+<Card style={{ width: 360 }}>
   <CardHeader>
     <CardTitle>Reinert classification</CardTitle>
     <CardDescription>Cluster text segments into lexical classes.</CardDescription>
