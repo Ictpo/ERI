@@ -28,3 +28,17 @@ body {
 @keyframes eriRing {
   to { transform: rotate(360deg); }
 }
+
+/* The OS "reduce motion" setting (WCAG 2.3.3). Dialogs, menus and toasts
+   keep at most their fade (see the keyframes in tailwind.config.ts), and the
+   brand loader holds still: its rain waits above the box (backwards fill)
+   and the ring stops, leaving the fox. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-rise: 0px;
+    --motion-slide: 0px;
+  }
+  .eri-motion {
+    animation-play-state: paused !important;
+  }
+}

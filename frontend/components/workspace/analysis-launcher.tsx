@@ -114,12 +114,15 @@ function NumberField({
   max,
   value,
   onCommit,
+  describedBy,
 }: {
   id: string;
   min: number;
   max?: number;
   value: number;
   onCommit: (value: number) => void;
+  /** id of a hint paragraph, read out after the field's label. */
+  describedBy?: string;
 }) {
   const [draft, setDraft] = React.useState(String(value));
   const hi = max ?? Number.MAX_SAFE_INTEGER;
@@ -131,6 +134,7 @@ function NumberField({
   return (
     <Input
       id={id}
+      aria-describedby={describedBy}
       type="number"
       min={min}
       max={max}
@@ -168,14 +172,14 @@ function SharedFields({
     <>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-2">
-          <Label>Language</Label>
+          <Label id={`${idPrefix}-lang-label`}>Language</Label>
           <Select
             value={state.lang}
             onValueChange={(lang) =>
               onChange({ ...state, lang: lang as SharedState["lang"] })
             }
           >
-            <SelectTrigger>
+            <SelectTrigger aria-labelledby={`${idPrefix}-lang-label`}>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -202,6 +206,7 @@ function SharedFields({
           <Switch
             checked={state.lemmatize}
             onCheckedChange={(lemmatize) => onChange({ ...state, lemmatize })}
+            aria-describedby={`${idPrefix}-lemmatize-hint`}
           />
           Lemmatize
         </label>
@@ -215,10 +220,14 @@ function SharedFields({
           Remove stopwords
         </label>
       </div>
+      <p id={`${idPrefix}-lemmatize-hint`} className="-mt-2 text-xs text-slate-500">
+        Lemmatize counts the forms of a word as one word (for example, ran and
+        running both count as run).
+      </p>
       <div className="grid gap-2">
         <Label htmlFor={`${idPrefix}-stopwords`}>
           Custom stopwords{" "}
-          <span className="font-normal text-slate-400">
+          <span className="font-normal text-slate-500">
             (comma or newline separated)
           </span>
         </Label>
@@ -257,15 +266,15 @@ export function AnalysisLauncher({
   const seed = (type: AnalysisType) =>
     (history.find((a) => a.type === type) ?? history[0])?.params as StoredParams;
 
-  // Per-type shared params (kept separate so each card remembers its config).
-  const [shared, setShared] = React.useState<Record<AnalysisType, SharedState>>(
-    () => ({
-      stats: sharedFrom(seed("stats")),
-      chd: sharedFrom(seed("chd")),
-      similarity: sharedFrom(seed("similarity")),
-      afc: sharedFrom(seed("afc")),
-    })
-  );
+  // Per-type shared params, stored once the user edits a card (kept separate
+  // so each card remembers its config). Until then a card follows its seed,
+  // read on every render, so a run made in this session (say, in Portuguese)
+  // carries its text settings to the cards that have no run of their own.
+  const [edited, setEdited] = React.useState<
+    Partial<Record<AnalysisType, SharedState>>
+  >({});
+  const sharedFor = (type: AnalysisType) =>
+    edited[type] ?? sharedFrom(seed(type));
   // Type-specific params
   const [maxCloudWords, setMaxCloudWords] = React.useState(() =>
     numFrom(seed("stats"), "max_cloud_words", 150)
@@ -291,7 +300,7 @@ export function AnalysisLauncher({
   async function launch(type: AnalysisType) {
     setLaunching(true);
     try {
-      const base = buildTextParams(shared[type]);
+      const base = buildTextParams(sharedFor(type));
       let params: object = base;
       if (type === "stats") params = { ...base, max_cloud_words: maxCloudWords };
       if (type === "chd")
@@ -311,8 +320,8 @@ export function AnalysisLauncher({
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Run an analysis</h2>
-          <p className="text-sm text-slate-500">
+          <h2 className="font-display text-lg font-semibold tracking-tight">Run an analysis</h2>
+          <p className="text-sm text-slate-600">
             Pick a method, tune its parameters, and launch.
           </p>
         </div>
@@ -386,9 +395,9 @@ export function AnalysisLauncher({
                 <div className="grid gap-4 border-t border-slate-100 p-5">
                   <SharedFields
                     idPrefix={type}
-                    state={shared[type]}
+                    state={sharedFor(type)}
                     onChange={(next) =>
-                      setShared((prev) => ({ ...prev, [type]: next }))
+                      setEdited((prev) => ({ ...prev, [type]: next }))
                     }
                   />
 
@@ -417,7 +426,12 @@ export function AnalysisLauncher({
                           max={200}
                           value={segSize}
                           onCommit={setSegSize}
+                          describedBy="chd-seg-size-hint"
                         />
+                        <p id="chd-seg-size-hint" className="text-xs text-slate-500">
+                          Texts are cut into segments of about this many
+                          words. Classes group segments, not whole documents.
+                        </p>
                       </div>
                       <div className="grid gap-2">
                         <Label htmlFor="chd-max-classes">Max classes</Label>
@@ -427,7 +441,12 @@ export function AnalysisLauncher({
                           max={12}
                           value={maxClasses}
                           onCommit={setMaxClasses}
+                          describedBy="chd-max-classes-hint"
                         />
+                        <p id="chd-max-classes-hint" className="text-xs text-slate-500">
+                          The most classes to find. ERI stops sooner when no
+                          class can be split further.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -459,18 +478,18 @@ export function AnalysisLauncher({
                     ) : (
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div className="grid gap-2">
-                          <Label>Variable to cross</Label>
+                          <Label id="afc-variable-label">Variable to cross</Label>
                           <Select
                             value={afcVariable}
                             onValueChange={setAfcVariable}
                           >
-                            <SelectTrigger>
+                            <SelectTrigger aria-labelledby="afc-variable-label">
                               <SelectValue placeholder="Select a variable" />
                             </SelectTrigger>
                             <SelectContent>
                               {corpusSummary.variables.map((v) => (
                                 <SelectItem key={v.name} value={v.name}>
-                                  {v.name} — {v.modalities.length} modalities
+                                  {v.name} — {v.modalities.length} values
                                 </SelectItem>
                               ))}
                             </SelectContent>

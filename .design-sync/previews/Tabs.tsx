@@ -10,7 +10,7 @@ export const AnalysisTabs = () => (
         <TabsTrigger value="cloud">Word cloud</TabsTrigger>
       </TabsList>
       <TabsContent value="overview">
-        <p style={{ fontSize: 14, color: "#475569", paddingTop: 12 }}>
+        <p style={{ fontSize: 14, color: "#645047", paddingTop: 12 }}>
           2,357 segments · 6 classes · 100% classified.
         </p>
       </TabsContent>

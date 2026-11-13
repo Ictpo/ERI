@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PALETTE, readableTextOn } from "../palette";
+import { PALETTE, TEXT_HUES, readableTextOn, wordPaint } from "../palette";
 
 // WCAG 2.x contrast, written out here rather than reusing palette.ts.
 function lum(hex: string): number {
@@ -23,5 +23,27 @@ describe("readableTextOn", () => {
 
   it("puts dark text on the yellow class colour", () => {
     expect(readableTextOn("#F0E442")).toBe("#0f172a");
+  });
+});
+
+describe("wordPaint", () => {
+  it("keeps every palette hue on the word, with letters and edge at AA", () => {
+    for (const hue of PALETTE) {
+      for (const size of [11, 20, 33]) {
+        const p = wordPaint(hue, size);
+        expect([p.fill, p.stroke]).toContain(hue);
+        expect(contrast(p.fill, p.stroke)).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+});
+
+describe("TEXT_HUES", () => {
+  it("are palette colours readable as small text on white", () => {
+    expect(TEXT_HUES.length).toBeGreaterThanOrEqual(2);
+    for (const c of TEXT_HUES) {
+      expect(PALETTE as readonly string[]).toContain(c);
+      expect(contrast(c, "#ffffff")).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });

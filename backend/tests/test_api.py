@@ -79,10 +79,18 @@ def test_error_envelope_shape():
 
 
 def test_settings_persist_plain_mode():
-    assert client.get("/api/settings").json() == {"plain_mode": False}
+    assert client.get("/api/settings").json() == {"plain_mode": False, "export_format": "svg"}
     r = client.put("/api/settings", json={"plain_mode": True})
-    assert r.json() == {"plain_mode": True}
-    assert client.get("/api/settings").json() == {"plain_mode": True}
+    assert r.json() == {"plain_mode": True, "export_format": "svg"}
+    assert client.get("/api/settings").json() == {"plain_mode": True, "export_format": "svg"}
+
+
+def test_settings_remember_export_format():
+    plain = client.get("/api/settings").json()["plain_mode"]
+    r = client.put("/api/settings", json={"export_format": "png"})
+    assert r.json() == {"plain_mode": plain, "export_format": "png"}
+    assert client.get("/api/settings").json()["export_format"] == "png"
+    assert client.put("/api/settings", json={"export_format": "gif"}).status_code == 422
 
 
 def test_afc_error_is_friendly():

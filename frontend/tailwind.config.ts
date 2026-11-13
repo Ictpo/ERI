@@ -75,12 +75,17 @@ const config: Config = {
         },
       },
       keyframes: {
+        // `translate`, not `transform`: a keyframe `transform` replaces the
+        // element's own transform while it plays, which un-centred every dialog
+        // (-translate-x/y-1/2) for 200 ms before it snapped to the middle.
+        // Under the OS reduce-motion setting the rise and the slide are 0
+        // (globals.css), so dialogs, menus and toasts keep at most a fade.
         "fade-in": {
-          from: { opacity: "0", transform: "translateY(4px)" },
-          to: { opacity: "1", transform: "translateY(0)" },
+          from: { opacity: "0", translate: "0 var(--motion-rise, 4px)" },
+          to: { opacity: "1", translate: "0 0" },
         },
         "slide-in-right": {
-          from: { transform: "translateX(100%)" },
+          from: { transform: "translateX(var(--motion-slide, 100%))" },
           to: { transform: "translateX(0)" },
         },
       },

@@ -2,9 +2,9 @@
 
 import * as React from "react";
 import * as d3 from "d3";
-import { Download, Maximize } from "lucide-react";
+import { Download, List, Maximize, RotateCcw } from "lucide-react";
 import type { AfcPoint, AfcResult } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, formatNumber } from "@/lib/utils";
 import { usePlainMode } from "@/lib/appearance";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,11 +12,15 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { ExportDialog } from "./export-dialog";
+import { LabelHandles, type LabelHandle } from "./label-handles";
 import { declutterLabels } from "@/lib/declutter";
+import { CHART_FONT } from "@/lib/export";
 
 const WIDTH = 720;
 const HEIGHT = 520;
 const MARGIN = { top: 24, right: 24, bottom: 40, left: 48 };
+// On-screen label size (CSS px), whatever the pane width.
+const LIVE_LABEL_PX = 10;
 
 type AxisPair = [number, number]; // 0-based axis indices
 
@@ -44,6 +48,13 @@ function axisValue(p: AfcPoint, axis: number): number | null {
   return p.z;
 }
 
+/** A point's share (%) of one axis's inertia: labels kept first. */
+function contribution(p: AfcPoint, axis: number): number {
+  if (axis === 0) return p.contrib_x;
+  if (axis === 1) return p.contrib_y;
+  return p.contrib_z ?? 0;
+}
+
 type Hover = {
   point: AfcPoint;
   kind: "word" | "modality";
@@ -62,6 +73,13 @@ type Placed = {
   /** True once the label has been nudged away from its natural spot —
       draw a leader line back to the marker so the two stay visually linked. */
   displaced?: boolean;
+  /** Label left out of the export: no room near its point (marker stays). */
+  hidden?: boolean;
+  /** Still overlapping (only with "Label every word"). */
+  overlapping?: boolean;
+  /** Leader-line end: the label's nearest point to its marker. */
+  ax?: number;
+  ay?: number;
 };
 
 /** Markers + labels for a set of positioned points (shared by the live
@@ -69,28 +87,29 @@ type Placed = {
 function PointNodes({
   placed,
   modalityColor,
+  scale = 1,
   onEnter,
   onLeave,
 }: {
   placed: Placed[];
   modalityColor: string;
+  scale?: number; // label size factor (the live map enlarges labels)
   onEnter?: (h: Hover) => void;
   onLeave?: () => void;
 }) {
   return (
     <>
-      {placed.map(({ point, kind, px, py, lx, ly, displaced }, i) => {
-        const labelX = lx ?? px + (kind === "word" ? 5 : 8);
-        const labelY = ly ?? py + (kind === "word" ? 3 : 4);
-        const leader = displaced ? (
+      {placed.map(({ point, kind, px, py, lx, ly, ax, ay, displaced, hidden }, i) => {
+        const labelX = lx ?? px + (kind === "word" ? 5 : 8) * scale;
+        const labelY = ly ?? py + (kind === "word" ? 3 : 4) * scale;
+        const leader = displaced && !hidden ? (
           <line
             x1={px}
             y1={py}
-            x2={labelX}
-            y2={labelY - (kind === "word" ? 3 : 4)}
+            x2={ax ?? labelX}
+            y2={ay ?? labelY - (kind === "word" ? 3 : 4)}
             stroke={kind === "word" ? WORD_COLOR : modalityColor}
-            strokeWidth={0.6}
-            strokeOpacity={0.55}
+            strokeWidth={0.8}
           />
         ) : null;
         if (kind === "word") {
@@ -108,16 +127,16 @@ function PointNodes({
                 }
                 onMouseLeave={onLeave}
               />
-              <text
+              {!hidden && <text
                 x={labelX}
                 y={labelY}
-                fontSize={9}
+                fontSize={9 * scale}
                 fill={WORD_COLOR}
-                fontFamily="Inter, system-ui, sans-serif"
+                fontFamily={CHART_FONT}
                 pointerEvents="none"
               >
                 {point.label.replace(/_+$/, "")}
-              </text>
+              </text>}
             </g>
           );
         }
@@ -134,12 +153,12 @@ function PointNodes({
               onMouseLeave={onLeave}
             />
             <text
-              x={placed[i].lx ?? px + 8}
-              y={placed[i].ly ?? py + 4}
-              fontSize={11}
+              x={labelX}
+              y={labelY}
+              fontSize={11 * scale}
               fontWeight={700}
               fill={modalityColor}
-              fontFamily="Inter, system-ui, sans-serif"
+              fontFamily={CHART_FONT}
               pointerEvents="none"
             >
               {point.label}
@@ -151,7 +170,14 @@ function PointNodes({
   );
 }
 
-export function AfcView({ result }: { result: AfcResult }) {
+export function AfcView({
+  result,
+  variable = "",
+}: {
+  result: AfcResult;
+  /** The crossed variable's name (e.g. "TIPO"), from the run's params. */
+  variable?: string;
+}) {
   const hasZ =
     result.explained.length >= 3 &&
     (result.rows.some((r) => r.z !== null) ||
@@ -160,11 +186,23 @@ export function AfcView({ result }: { result: AfcResult }) {
   const [showWords, setShowWords] = React.useState(true);
   const [showModalities, setShowModalities] = React.useState(true);
   const [hover, setHover] = React.useState<Hover | null>(null);
+  // Keyboard and screen-reader route to every point's values (hover is mouse-only).
+  const [tableOpen, setTableOpen] = React.useState(false);
   const [transform, setTransform] = React.useState(d3.zoomIdentity);
   // Export options (live modality color also benefits the on-screen plot).
   const [exportOpen, setExportOpen] = React.useState(false);
   const [minGap, setMinGap] = React.useState(2);
-  const [includeAxes, setIncludeAxes] = React.useState(false);
+  const [includeAxes, setIncludeAxes] = React.useState(true); // axes, % and key on by default
+  // On: every word labelled, leftovers overlap (to fix in an editor).
+  const [labelAll, setLabelAll] = React.useState(false);
+  // Furthest a word label may sit from its point in the export (px).
+  const [maxShift, setMaxShift] = React.useState(40);
+  // Labels the user placed by hand in the Download preview, in export units,
+  // per axis pair. Only label text moves; markers keep their factor positions.
+  const [handPlaced, setHandPlaced] = React.useState<
+    Record<string, { lx: number; ly: number }>
+  >({});
+  const [moveByHand, setMoveByHand] = React.useState(false);
   const { plain } = usePlainMode();
   const [modalityColor, setModalityColor] = React.useState(
     DEFAULT_MODALITY_COLOR
@@ -184,6 +222,27 @@ export function AfcView({ result }: { result: AfcResult }) {
   );
 
   const [ax, ay] = axes;
+  const plane = `${ax}${ay}|`;
+  // Label widths measured in the chart font, not guessed from characters.
+  const measure = React.useMemo(() => {
+    const ctx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+    if (!ctx) return undefined;
+    return (text: string, kind: "word" | "modality") => {
+      ctx.font = kind === "word" ? `9px ${CHART_FONT}` : `700 11px ${CHART_FONT}`;
+      return ctx.measureText(text).width;
+    };
+  }, []);
+  // A label's width as the declutter sees it (measured, else estimated).
+  const labelWidth = React.useCallback(
+    (text: string, kind: "word" | "modality") =>
+      Math.max(
+        8,
+        measure
+          ? measure(text, kind)
+          : text.length * (kind === "word" ? 9 * 0.55 : 11 * 0.62)
+      ),
+    [measure]
+  );
 
   const points = React.useMemo(() => {
     const mk = (p: AfcPoint, kind: "word" | "modality") => {
@@ -266,12 +325,23 @@ export function AfcView({ result }: { result: AfcResult }) {
       svg.on(".zoom", null);
     };
   }, []);
+  // CSS px per drawing unit, so live labels keep a readable size.
+  const [fit, setFit] = React.useState(1);
+  React.useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setFit(svg.clientWidth / WIDTH || 1));
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, []);
 
   function resetView() {
     if (svgRef.current && zoomRef.current) {
+      // Under the OS "reduce motion" setting, jump back instead of zooming.
+      const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
       d3.select(svgRef.current)
         .transition()
-        .duration(250)
+        .duration(reduce ? 0 : 250)
         .call(zoomRef.current.transform, d3.zoomIdentity);
     }
   }
@@ -279,12 +349,44 @@ export function AfcView({ result }: { result: AfcResult }) {
   const zx = transform.rescaleX(xScale);
   const zy = transform.rescaleY(yScale);
 
+  const liveScale = Math.max(1, LIVE_LABEL_PX / (9 * fit));
   const livePlaced: Placed[] = visiblePoints.map(({ point, kind, vx, vy }) => ({
     point,
     kind,
     px: zx(vx),
     py: zy(vy),
   }));
+  // On screen a word's label is left off where it would cover the label of a
+  // point that contributes more (modalities first); zooming spreads points so
+  // more appear. Labels never move here; every point is drawn.
+  let liveCovered = 0;
+  const taken: { x: number; y: number; w: number; h: number }[] = [];
+  livePlaced
+    .map((p) => ({
+      p,
+      rank: p.kind === "modality" ? Number.MAX_SAFE_INTEGER : contribution(p.point, ax) + contribution(p.point, ay),
+    }))
+    .sort((a, b) => b.rank - a.rank)
+    .forEach(({ p }) => {
+      const word = p.kind === "word";
+      const inPlot = p.px >= MARGIN.left && p.px <= WIDTH - MARGIN.right && p.py >= MARGIN.top && p.py <= HEIGHT - MARGIN.bottom;
+      if (!inPlot) {
+        p.hidden = word;
+        return;
+      }
+      const text = word ? p.point.label.replace(/_+$/, "") : p.point.label;
+      const fs = (word ? 9 : 11) * liveScale;
+      const box = {
+        x: p.px + (word ? 5 : 8) * liveScale,
+        y: p.py + (word ? 3 : 4) * liveScale - fs * 0.9,
+        w: (measure ? measure(text, p.kind) : text.length * (word ? 4.95 : 6.82)) * liveScale,
+        h: fs * 1.2,
+      };
+      if (word && taken.some((t) => box.x < t.x + t.w && t.x < box.x + box.w && box.y < t.y + t.h && t.y < box.y + box.h)) {
+        p.hidden = true;
+        liveCovered++;
+      } else taken.push(box);
+    });
 
   // Offscreen export plot: identity transform (never the zoom viewport),
   // with label overlaps resolved by minimal nudging. Markers stay at their
@@ -310,18 +412,98 @@ export function AfcView({ result }: { result: AfcResult }) {
           p.kind === "word"
             ? p.point.label.replace(/_+$/, "")
             : p.point.label,
+        priority: contribution(p.point, ax) + contribution(p.point, ay),
       })),
       minGap,
       eW,
-      eH
+      eH,
+      {
+        measure,
+        keepAll: labelAll,
+        maxShift,
+        // Keep labels off the axis titles and key (bottom band) and the y title (left band).
+        obstacles: includeAxes ? [{ x: 0, y: eH - 28, w: eW, h: 28 }, { x: 0, y: 0, w: 22, h: eH }] : [],
+      }
     );
-    return base.map((p, i) => ({
-      ...p,
-      lx: labels[i].lx,
-      ly: labels[i].ly,
-      displaced: labels[i].displaced,
+    return base.map((p, i) => {
+      const hand = handPlaced[`${plane}${p.kind}|${p.point.label}`];
+      if (!hand) {
+        return {
+          ...p,
+          lx: labels[i].lx,
+          ly: labels[i].ly,
+          displaced: labels[i].displaced,
+          hidden: labels[i].hidden,
+          overlapping: labels[i].overlapping,
+          ax: labels[i].ax,
+          ay: labels[i].ay,
+        };
+      }
+      // Placed by hand: shown wherever the user put it, with a leader line
+      // once it leaves its own spot.
+      const word = p.kind === "word";
+      const fs = word ? 9 : 11;
+      const text = word ? p.point.label.replace(/_+$/, "") : p.point.label;
+      const w = labelWidth(text, p.kind);
+      const top = hand.ly - fs * 0.9;
+      return {
+        ...p,
+        lx: hand.lx,
+        ly: hand.ly,
+        displaced:
+          Math.abs(hand.lx - (p.px + (word ? 5 : 8))) > 1.5 ||
+          Math.abs(hand.ly - (p.py + (word ? 3 : 4))) > 1.5,
+        hidden: false,
+        overlapping: false,
+        ax: Math.min(Math.max(p.px, hand.lx), hand.lx + w),
+        ay: Math.min(Math.max(p.py, top), top + fs * 1.2),
+      };
+    });
+  }, [exportOpen, visiblePoints, xScale, yScale, minGap, eW, eH, ax, ay, measure, labelAll, maxShift, includeAxes, handPlaced, plane, labelWidth]);
+  // Word labels the export leaves out (or that still overlap), for the preview.
+  const exportWords = exportPlaced.filter((p) => p.kind === "word");
+  const unplaced = exportWords.filter((p) => (labelAll ? p.overlapping : p.hidden)).length;
+
+  // Grab areas for the Download preview, sized like the declutter's boxes.
+  const labelHandles: LabelHandle[] = exportPlaced
+    .filter((p) => !p.hidden)
+    .map((p) => {
+      const word = p.kind === "word";
+      const fs = word ? 9 : 11;
+      const text = word ? p.point.label.replace(/_+$/, "") : p.point.label;
+      return {
+        key: `${plane}${p.kind}|${p.point.label}`,
+        text,
+        x: p.lx ?? p.px + (word ? 5 : 8),
+        y: (p.ly ?? p.py + (word ? 3 : 4)) - fs * 0.9,
+        w: labelWidth(text, p.kind),
+        h: fs * 1.2,
+      };
+    });
+  const planeHasHandPlaced = Object.keys(handPlaced).some((k) =>
+    k.startsWith(plane)
+  );
+
+  function moveLabel(key: string, dx: number, dy: number) {
+    const h = labelHandles.find((l) => l.key === key);
+    if (!h) return;
+    const fs = h.h / 1.2;
+    setHandPlaced((prev) => ({
+      ...prev,
+      [key]: {
+        lx: Math.max(2, Math.min(eW - h.w - 2, h.x + dx)),
+        ly: Math.max(10, Math.min(eH - 4, h.y + fs * 0.9 + dy)),
+      },
     }));
-  }, [exportOpen, visiblePoints, xScale, yScale, minGap, eW, eH]);
+  }
+
+  function resetHandPlaced() {
+    setHandPlaced((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).filter(([k]) => !k.startsWith(plane))
+      )
+    );
+  }
 
   const explainedX = result.explained[ax]?.toFixed(1) ?? "?";
   const explainedY = result.explained[ay]?.toFixed(1) ?? "?";
@@ -334,12 +516,21 @@ export function AfcView({ result }: { result: AfcResult }) {
       ]
     : [{ label: "1 × 2", pair: [0, 1] }];
 
+  // Values table rows: words in the engine's order (most frequent first),
+  // then the crossed variable's values.
+  const tableAxes = hasZ ? [0, 1, 2] : [0, 1];
+  const tableRows = [
+    ...result.rows.map((point) => ({ point, kind: "word" as const })),
+    ...result.cols.map((point) => ({ point, kind: "modality" as const })),
+  ];
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         {/* Show/hide chips */}
         <button
           onClick={() => setShowWords((v) => !v)}
+          aria-pressed={showWords}
           className={cn(
             "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
             showWords
@@ -351,6 +542,7 @@ export function AfcView({ result }: { result: AfcResult }) {
         </button>
         <button
           onClick={() => setShowModalities((v) => !v)}
+          aria-pressed={showModalities}
           className={cn(
             "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
             showModalities
@@ -358,16 +550,21 @@ export function AfcView({ result }: { result: AfcResult }) {
               : "border-slate-300 bg-white text-slate-500"
           )}
         >
-          Variables ({result.cols.length})
+          {variable || "Variable"} values ({result.cols.length})
         </button>
 
         {/* Axis pair switcher */}
         {hasZ && (
-          <div className="ml-2 inline-flex rounded-md border border-slate-200 p-0.5">
+          <div
+            role="group"
+            aria-label="Axes shown"
+            className="ml-2 inline-flex rounded-md border border-slate-200 p-0.5"
+          >
             {axisPairs.map(({ label, pair }) => (
               <button
                 key={label}
                 onClick={() => setAxes(pair)}
+                aria-pressed={pair[0] === ax && pair[1] === ay}
                 className={cn(
                   "rounded px-2.5 py-1 text-xs font-medium text-slate-500",
                   pair[0] === ax && pair[1] === ay && "bg-slate-100 text-slate-900"
@@ -380,6 +577,14 @@ export function AfcView({ result }: { result: AfcResult }) {
         )}
 
         <div className="ml-auto flex gap-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setTableOpen((v) => !v)}
+            aria-expanded={tableOpen}
+          >
+            <List /> Values table
+          </Button>
           <Button variant="outline" size="sm" onClick={resetView}>
             <Maximize /> Reset view
           </Button>
@@ -426,7 +631,7 @@ export function AfcView({ result }: { result: AfcResult }) {
                 textAnchor="end"
                 fontSize={12}
                 fill="#64748b"
-                fontFamily="Inter, system-ui, sans-serif"
+                fontFamily={CHART_FONT}
               >
                 Axis {ax + 1} ({explainedX}%)
               </text>
@@ -435,7 +640,7 @@ export function AfcView({ result }: { result: AfcResult }) {
                 y={MARGIN.top}
                 fontSize={12}
                 fill="#64748b"
-                fontFamily="Inter, system-ui, sans-serif"
+                fontFamily={CHART_FONT}
                 transform={`rotate(-90 16 ${MARGIN.top})`}
                 textAnchor="end"
               >
@@ -456,50 +661,147 @@ export function AfcView({ result }: { result: AfcResult }) {
               <PointNodes
                 placed={livePlaced}
                 modalityColor={modalityColor}
+                scale={liveScale}
                 onEnter={setHover}
                 onLeave={() => setHover(null)}
               />
             </g>
           </svg>
 
-          {/* Tooltip */}
+          {/* Tooltip: fixed width, centred below or above the point and kept
+              inside the card, so it never narrows or runs past the edge. */}
           {hover && (
             <div
-              className="pointer-events-none absolute z-10 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs shadow-md"
+              className="pointer-events-none absolute z-10 w-72 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs shadow-md"
               style={{
-                left: `${(hover.px / WIDTH) * 100}%`,
+                left: `clamp(0px, calc(${(hover.px / WIDTH) * 100}% - 9rem), calc(100% - 18rem))`,
                 top: `${(hover.py / HEIGHT) * 100}%`,
-                transform: "translate(10px, -50%)",
+                // Below the point in the top half of the map, above it lower down.
+                transform:
+                  hover.py < HEIGHT / 2
+                    ? "translateY(12px)"
+                    : "translateY(calc(-100% - 12px))",
               }}
             >
               <p className="font-semibold text-slate-800">
                 {hover.point.label.replace(/_+$/, "")}{" "}
-                <span className="font-normal text-slate-400">
-                  ({hover.kind === "word" ? "word" : "modality"})
+                <span className="font-normal text-slate-500">
+                  ({hover.kind === "word" ? "word" : `value of ${variable || "the variable"}`})
                 </span>
               </p>
               <p className="tabular-nums text-slate-500">
-                axis 1 {hover.point.x.toFixed(3)} · axis 2{" "}
+                Position: axis 1 {hover.point.x.toFixed(3)} · axis 2{" "}
                 {hover.point.y.toFixed(3)}
                 {hover.point.z !== null && <> · axis 3 {hover.point.z.toFixed(3)}</>}
               </p>
               <p className="tabular-nums text-slate-500">
-                contrib axis 1 {hover.point.contrib_x.toFixed(1)}% · axis 2{" "}
+                Contribution: axis 1 {hover.point.contrib_x.toFixed(1)}% · axis 2{" "}
                 {hover.point.contrib_y.toFixed(1)}%
                 {hover.point.contrib_z != null && (
                   <> · axis 3 {hover.point.contrib_z.toFixed(1)}%</>
                 )}
               </p>
               <p className="tabular-nums text-slate-500">
-                freq {hover.point.freq}
+                {hover.kind === "word"
+                  ? `Used ${hover.point.freq} times`
+                  : `${hover.point.freq} words in documents with this value`}
               </p>
             </div>
           )}
         </CardContent>
       </Card>
-      <p className="text-xs text-slate-400">
-        Scroll to zoom, drag to pan. Circles are words; diamonds are variable
-        modalities. Download opens a preview with spacing and color controls.
+      {liveCovered > 0 && (
+        <p className="text-xs text-slate-500">
+          {liveCovered} word labels are hidden at this zoom so the others can be read. Zoom in to see them, or hover over a dot.
+        </p>
+      )}
+      {tableOpen && (
+        <div className="max-h-80 overflow-auto rounded-md border border-slate-200 bg-white">
+          <table className="w-full text-xs">
+            <caption className="sr-only">
+              Every point on the map, with its position on each axis, its
+              contribution to each axis and its frequency
+            </caption>
+            <thead className="sticky top-0 bg-slate-50 text-left text-slate-500">
+              <tr>
+                <th scope="col" className="border-b border-slate-200 px-3 py-2 font-medium">
+                  Point
+                </th>
+                {tableAxes.map((a) => (
+                  <th
+                    key={`pos${a}`}
+                    scope="col"
+                    className="border-b border-slate-200 px-3 py-2 text-right font-medium"
+                  >
+                    Axis {a + 1}
+                  </th>
+                ))}
+                {tableAxes.map((a) => (
+                  <th
+                    key={`con${a}`}
+                    scope="col"
+                    className="border-b border-slate-200 px-3 py-2 text-right font-medium"
+                  >
+                    Contribution to axis {a + 1} (%)
+                  </th>
+                ))}
+                <th scope="col" className="border-b border-slate-200 px-3 py-2 text-right font-medium">
+                  Frequency
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {tableRows.map(({ point, kind }) => (
+                <tr key={`${kind}-${point.label}`} className="hover:bg-slate-50/60">
+                  <th
+                    scope="row"
+                    className="border-b border-slate-100 px-3 py-1.5 text-left font-medium text-slate-700"
+                  >
+                    {point.label.replace(/_+$/, "")}
+                    {kind === "modality" && (
+                      <span className="font-normal text-slate-500"> (value)</span>
+                    )}
+                  </th>
+                  {tableAxes.map((a) => (
+                    <td
+                      key={`pos${a}`}
+                      className="border-b border-slate-100 px-3 py-1.5 text-right tabular-nums"
+                    >
+                      {axisValue(point, a)?.toFixed(3) ?? "—"}
+                    </td>
+                  ))}
+                  {tableAxes.map((a) => {
+                    const c = [point.contrib_x, point.contrib_y, point.contrib_z][a];
+                    return (
+                      <td
+                        key={`con${a}`}
+                        className="border-b border-slate-100 px-3 py-1.5 text-right tabular-nums"
+                      >
+                        {c != null ? c.toFixed(1) : "—"}
+                      </td>
+                    );
+                  })}
+                  <td className="border-b border-slate-100 px-3 py-1.5 text-right tabular-nums">
+                    {formatNumber(point.freq)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <p className="text-xs text-slate-500">
+        Scroll to zoom, drag to pan. Circles are words; diamonds are the values
+        of {variable || "the variable"}. Download opens a preview with spacing
+        and color controls.
+      </p>
+      <p className="text-xs text-slate-500">
+        How to read it: words far from the centre, on the same side as a
+        diamond, are used relatively more in documents with that value; words
+        near the centre are used about equally by all. Axis {ax + 1} and Axis{" "}
+        {ay + 1} are directions along which the values&apos; vocabularies
+        differ, and the % beside each is how much of the total difference that
+        axis shows. A point&apos;s contribution is how much it shapes an axis.
       </p>
 
       {/* Offscreen export plot: always full extent, spread-scaled. */}
@@ -521,16 +823,18 @@ export function AfcView({ result }: { result: AfcResult }) {
                 x2={eW - MARGIN.right}
                 y1={yScale(0)}
                 y2={yScale(0)}
-                stroke="#e2e8f0"
-                strokeWidth={1}
+                stroke="#64748b"
+                strokeWidth={0.75}
+                strokeDasharray="4 3"
               />
               <line
                 x1={xScale(0)}
                 x2={xScale(0)}
                 y1={MARGIN.top}
                 y2={eH - MARGIN.bottom}
-                stroke="#e2e8f0"
-                strokeWidth={1}
+                stroke="#64748b"
+                strokeWidth={0.75}
+                strokeDasharray="4 3"
               />
               <text
                 x={eW - MARGIN.right}
@@ -538,7 +842,7 @@ export function AfcView({ result }: { result: AfcResult }) {
                 textAnchor="end"
                 fontSize={12}
                 fill="#64748b"
-                fontFamily="Inter, system-ui, sans-serif"
+                fontFamily={CHART_FONT}
               >
                 Axis {ax + 1} ({explainedX}%)
               </text>
@@ -547,11 +851,18 @@ export function AfcView({ result }: { result: AfcResult }) {
                 y={MARGIN.top}
                 fontSize={12}
                 fill="#64748b"
-                fontFamily="Inter, system-ui, sans-serif"
+                fontFamily={CHART_FONT}
                 transform={`rotate(-90 16 ${MARGIN.top})`}
                 textAnchor="end"
               >
                 Axis {ay + 1} ({explainedY}%)
+              </text>
+              {/* Key: the symbols, and the variable crossed. */}
+              <circle cx={MARGIN.left + 3} cy={eH - 16} r={3} fill={WORD_COLOR} fillOpacity={0.7} />
+              <text x={MARGIN.left + 10} y={eH - 12} fontSize={11} fill={WORD_COLOR} fontFamily={CHART_FONT}>words</text>
+              <path d={`M${MARGIN.left + 62},${eH - 21.5} l5.5,5.5 l-5.5,5.5 l-5.5,-5.5 Z`} fill={modalityColor} />
+              <text x={MARGIN.left + 72} y={eH - 12} fontSize={11} fontWeight={700} fill={modalityColor} fontFamily={CHART_FONT}>
+                {variable ? `${variable} values` : "variable values"}
               </text>
             </g>
           )}
@@ -562,9 +873,14 @@ export function AfcView({ result }: { result: AfcResult }) {
       <ExportDialog
         open={exportOpen}
         onOpenChange={setExportOpen}
-        filename="afc-scatter"
+        filename={`afc-${variable.replace(/[^\w-]+/g, "_") || "scatter"}-axes-${ax + 1}x${ay + 1}`}
         getSvg={() => exportRef.current}
-        version={`${minGap}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}`}
+        version={`${minGap}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}|${labelAll}|${maxShift}|${JSON.stringify(handPlaced)}`}
+        overlay={
+          moveByHand ? (
+            <LabelHandles handles={labelHandles} onMove={moveLabel} />
+          ) : undefined
+        }
         controls={
           <>
             <div className="grid gap-2">
@@ -573,6 +889,7 @@ export function AfcView({ result }: { result: AfcResult }) {
                 <span className="tabular-nums">{minGap}px</span>
               </Label>
               <Slider
+                aria-label="Minimum gap between words"
                 min={0}
                 max={12}
                 step={1}
@@ -580,13 +897,26 @@ export function AfcView({ result }: { result: AfcResult }) {
                 onValueChange={([v]) => setMinGap(v)}
               />
             </div>
+            <div className="grid gap-2">
+              <Label>
+                Furthest a label may sit from its point: <span className="tabular-nums">{maxShift}px</span>
+              </Label>
+              <Slider
+                aria-label="Furthest a label may sit from its point"
+                min={10}
+                max={120}
+                step={5}
+                value={[maxShift]}
+                onValueChange={([v]) => setMaxShift(v)}
+              />
+            </div>
             <div className="flex items-center justify-between gap-4">
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <Switch checked={includeAxes} onCheckedChange={setIncludeAxes} />
-                Include axes (%)
+                Include axes, % and key
               </label>
               <label className="flex items-center gap-2 text-sm text-slate-700">
-                Variable color
+                Diamond color
                 <input
                   type="color"
                   value={modalityColor}
@@ -595,9 +925,38 @@ export function AfcView({ result }: { result: AfcResult }) {
                     setModalityColor(e.target.value);
                   }}
                   className="h-7 w-10 cursor-pointer rounded border border-slate-300 bg-white p-0.5"
-                  aria-label="Variable modality color"
+                  aria-label="Diamond color"
                 />
               </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-slate-700 sm:col-span-2">
+              <Switch checked={labelAll} onCheckedChange={setLabelAll} />
+              Label every word, even where labels overlap
+            </label>
+            {unplaced > 0 && (
+              <p className="text-xs text-slate-600 sm:col-span-2" role="status">
+                {labelAll
+                  ? `${unplaced} of ${exportWords.length} word labels still overlap a label or a point. Fix them in an editor, or switch this off to leave them out.`
+                  : `${unplaced} of ${exportWords.length} word labels are left out: there was no room near their points. Their points are still drawn; the words left out contribute least to these two axes.`}
+              </p>
+            )}
+            <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <Switch checked={moveByHand} onCheckedChange={setMoveByHand} />
+                Move labels by hand
+              </label>
+              {planeHasHandPlaced && (
+                <Button variant="ghost" size="sm" onClick={resetHandPlaced}>
+                  <RotateCcw /> Reset moved labels
+                </Button>
+              )}
+              {moveByHand && (
+                <p className="w-full text-xs text-slate-600">
+                  Drag a label in the preview, or Tab to it and use the arrow
+                  keys (hold Shift for bigger steps). Only labels move; the
+                  points stay where the analysis put them.
+                </p>
+              )}
             </div>
           </>
         }

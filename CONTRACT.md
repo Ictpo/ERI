@@ -118,10 +118,10 @@ type AfcPoint = { label: string; x: number; y: number; z: number | null; mass: n
 App-wide UI preferences, stored in the local database (the desktop webview keeps no localStorage between launches).
 
 - `GET /api/settings` → `Settings`
-- `PUT /api/settings` `Settings` → `Settings`
+- `PUT /api/settings` `Partial<Settings>` → `Settings` (only the fields sent change)
 
 ```ts
-type Settings = { plain_mode: boolean };
+type Settings = { plain_mode: boolean; export_format: "svg" | "png" /* last format picked in a Download preview; default "svg" */ };
 ```
 
 ## Health

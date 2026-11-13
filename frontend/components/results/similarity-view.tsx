@@ -2,12 +2,16 @@
 
 import * as React from "react";
 import * as d3 from "d3";
-import { Download, Maximize2, RotateCw, X } from "lucide-react";
+import { Download, Expand, Maximize2, RotateCcw, RotateCw, Undo2, X } from "lucide-react";
 import type { SimilarityEdge, SimilarityResult } from "@/lib/types";
-import { categoryColor, fillStroke } from "@/lib/palette";
-import { formatNumber } from "@/lib/utils";
+import { CHART_FONT } from "@/lib/export";
+import { categoryColor, wordPaint } from "@/lib/palette";
+import { cn, formatNumber } from "@/lib/utils";
 import { maxSpanningTree } from "@/lib/mst";
+import { EDGE_CLEARANCE, PAIR_BUDGET, forceEdgeClearance, settleEdgeClearance, type Seg } from "@/lib/edge-clearance";
 import { ExportDialog } from "./export-dialog";
+import { LargeView } from "./large-view";
+import { LabelHandles, type LabelHandle } from "./label-handles";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,25 +59,17 @@ type LaidEdge = {
   y2: number;
 };
 
-type Hull = { community: number; path: string };
+/** Room (px) round a word in its community's area, and half the width of the
+    band along a tie inside a community: narrower than the 6 px EDGE_CLEARANCE
+    the layout keeps round foreign ties, so a band never reaches another word. */
+const AREA_PAD = 4;
+const AREA_BAND = 5;
 
-/** Pad a set of points and return a smooth closed contour around them. */
-function communityContour(points: [number, number][], pad: number): string {
-  const expanded: [number, number][] = [];
-  const STEPS = 8;
-  for (const [x, y] of points) {
-    for (let i = 0; i < STEPS; i++) {
-      const a = (i / STEPS) * 2 * Math.PI;
-      expanded.push([x + pad * Math.cos(a), y + pad * Math.sin(a)]);
-    }
-  }
-  const hull = d3.polygonHull(expanded);
-  if (!hull) return "";
-  const line = d3
-    .line<[number, number]>()
-    .curve(d3.curveCatmullRomClosed.alpha(0.8));
-  return line(hull) ?? "";
-}
+type Area = {
+  community: number;
+  boxes: { x: number; y: number; w: number; h: number }[];
+  bands: { x1: number; y1: number; x2: number; y2: number }[];
+};
 
 /** Run the force simulation synchronously; returns positioned nodes. */
 function computeLayout(
@@ -119,6 +115,10 @@ function computeLayout(
     });
   });
 
+  // Labels must clear foreign edges too (lib/edge-clearance). forceLink swaps
+  // edge ids for node objects, so `segs` holds nodes once the run starts.
+  const clear = simNodes.length * simEdges.length <= PAIR_BUDGET;
+  const segs = simEdges as unknown as Seg[];
   const sim = d3
     .forceSimulation(simNodes as d3.SimulationNodeDatum[])
     .force(
@@ -141,6 +141,7 @@ function computeLayout(
         .radius((d) => (d as unknown as LaidNode).halfWidth + 6)
         .iterations(2)
     )
+    .force("edges", clear ? forceEdgeClearance(segs, EDGE_CLEARANCE) : null)
     .force(
       "x",
       d3
@@ -162,6 +163,7 @@ function computeLayout(
     .stop();
 
   for (let i = 0; i < 300; i++) sim.tick();
+  if (clear) settleEdgeClearance(sim, simNodes as unknown as LaidNode[], segs);
   return simNodes as unknown as LaidNode[];
 }
 
@@ -178,6 +180,19 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
   const [layoutSeed, setLayoutSeed] = React.useState(1);
   const [exportOpen, setExportOpen] = React.useState(false);
   const [spread, setSpread] = React.useState(1);
+  // Large view: the same drawing in a window-sized panel.
+  const [large, setLarge] = React.useState(false);
+  // Earlier layout seeds, so "Previous layout" can undo a re-run (the layout
+  // is seeded, so an old seed redraws exactly the old layout).
+  const [seedHistory, setSeedHistory] = React.useState<number[]>([]);
+  const lastSeed = React.useRef(1);
+  // Words moved by hand in the Download preview: offsets in figure units,
+  // keyed by the layout they were made on, so a filter change or a re-run
+  // never misplaces them and returning to that layout restores them.
+  const [handMoved, setHandMoved] = React.useState<
+    Record<string, { dx: number; dy: number }>
+  >({});
+  const [moveByHand, setMoveByHand] = React.useState(false);
 
   const freqDomain = React.useMemo(() => {
     const freqs = result.nodes.map((n) => n.freq);
@@ -241,7 +256,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
 
   // Word-spacing control: scale positions away from the centroid while
   // font sizes stay constant, so labels get room without re-layout.
-  const laidNodes = React.useMemo(() => {
+  const spreadNodes = React.useMemo(() => {
     if (spread === 1 || rawLaidNodes.length === 0) return rawLaidNodes;
     const cx =
       rawLaidNodes.reduce((s, n) => s + n.x, 0) / rawLaidNodes.length;
@@ -253,6 +268,17 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
       y: cy + (n.y - cy) * spread,
     }));
   }, [rawLaidNodes, spread]);
+
+  // Words moved by hand apply on top, for the layout they were made on.
+  const layoutKey = `${metric}|${minFreq}|${minWeight}|${treeOnly}|${layoutSeed}|`;
+  const laidNodes = React.useMemo(
+    () =>
+      spreadNodes.map((n) => {
+        const m = handMoved[`${layoutKey}${n.id}`];
+        return m ? { ...n, x: n.x + m.dx, y: n.y + m.dy } : n;
+      }),
+    [spreadNodes, handMoved, layoutKey]
+  );
 
   const nodeById = React.useMemo(
     () => new Map(laidNodes.map((n) => [n.id, n])),
@@ -281,45 +307,48 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
     [visible.edges, nodeById, metric, maxWeight]
   );
 
-  // Translucent contour per community, drawn beneath edges and labels.
-  const hulls: Hull[] = React.useMemo(() => {
+  // Community areas hug their own words: a padded box round each member's
+  // label, joined by bands along ties inside the community. Unlike a convex
+  // hull round scattered members, they never take in another community's word.
+  const areas: Area[] = React.useMemo(() => {
     if (!showCommunities) return [];
-    const groups = d3.group(laidNodes, (n) => n.community);
-    const out: Hull[] = [];
-    groups.forEach((members, community) => {
+    const out: Area[] = [];
+    d3.group(laidNodes, (n) => n.community).forEach((members, community) => {
       if (community < 0) return;
-      const pts = members.map((m) => [m.x, m.y] as [number, number]);
-      const pad = 14 + Math.max(...members.map((m) => m.halfWidth)) * 0.6;
-      const path = communityContour(pts, pad);
-      if (path) out.push({ community, path });
+      const boxes = members.map((m) => ({
+        x: m.x - m.halfWidth - AREA_PAD,
+        y: m.y - m.fontSize * 0.6 - AREA_PAD,
+        w: 2 * (m.halfWidth + AREA_PAD),
+        h: m.fontSize * 1.2 + 2 * AREA_PAD,
+      }));
+      const bands = laidEdges
+        .filter((e) => nodeById.get(e.source)?.community === community && nodeById.get(e.target)?.community === community)
+        .map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 }));
+      out.push({ community, boxes, bands });
     });
     return out.sort((a, b) => a.community - b.community);
-  }, [laidNodes, showCommunities]);
+  }, [laidNodes, laidEdges, nodeById, showCommunities]);
 
   // Fit the drawing into the viewBox: the old fixed pad around node centres
   // is the minimum, widened wherever a label (estimated half-width + white
-  // halo) or a community contour (same pad as `hulls` above) reaches further,
-  // so exports, which are cropped to the viewBox, never cut words or contours.
+  // halo) or its community area (AREA_PAD round the label) reaches further,
+  // so exports, which are cropped to the viewBox, never cut words or areas.
   const viewBox = React.useMemo(() => {
     if (laidNodes.length === 0) return `0 0 ${VIEW_W} ${VIEW_H}`;
     const padX = 70;
     const padY = 46;
     const EDGE = 6;
-    const hullPad = new Map<number, number>();
-    for (const n of laidNodes) {
-      if (n.community < 0) continue;
-      const pad = 14 + n.halfWidth * 0.6;
-      hullPad.set(n.community, Math.max(hullPad.get(n.community) ?? 0, pad));
-    }
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
     let maxY = -Infinity;
     for (const n of laidNodes) {
       const halo = Math.max(2, n.fontSize / 5) / 2;
-      const hull = (hullPad.get(n.community) ?? 0) + EDGE;
-      const rx = Math.max(padX, n.halfWidth + halo + EDGE, hull);
-      const ry = Math.max(padY, n.fontSize / 2 + halo + EDGE, hull);
+      const rx = Math.max(padX, n.halfWidth + Math.max(halo, AREA_PAD) + EDGE);
+      const ry = Math.max(
+        padY,
+        Math.max(n.fontSize / 2 + halo, n.fontSize * 0.6 + AREA_PAD) + EDGE
+      );
       minX = Math.min(minX, n.x - rx);
       maxX = Math.max(maxX, n.x + rx);
       minY = Math.min(minY, n.y - ry);
@@ -375,6 +404,48 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
     setExportOpen(true);
   }
 
+  function rerunLayout() {
+    setSeedHistory((h) => [...h, layoutSeed]);
+    lastSeed.current += 1;
+    setLayoutSeed(lastSeed.current);
+  }
+
+  function previousLayout() {
+    const prev = seedHistory[seedHistory.length - 1];
+    if (prev === undefined) return;
+    setSeedHistory((h) => h.slice(0, -1));
+    setLayoutSeed(prev);
+  }
+
+  // Grab areas for the Download preview: each word's estimated box.
+  const wordHandles: LabelHandle[] = laidNodes.map((n) => ({
+    key: n.id,
+    text: n.label,
+    x: n.x - n.halfWidth,
+    y: n.y - n.fontSize / 2,
+    w: n.halfWidth * 2,
+    h: n.fontSize,
+  }));
+  const layoutHasHandMoved = Object.keys(handMoved).some((k) =>
+    k.startsWith(layoutKey)
+  );
+
+  function moveWord(id: string, dx: number, dy: number) {
+    const key = `${layoutKey}${id}`;
+    setHandMoved((prev) => {
+      const m = prev[key] ?? { dx: 0, dy: 0 };
+      return { ...prev, [key]: { dx: m.dx + dx, dy: m.dy + dy } };
+    });
+  }
+
+  function resetHandMoved() {
+    setHandMoved((prev) =>
+      Object.fromEntries(
+        Object.entries(prev).filter(([k]) => !k.startsWith(layoutKey))
+      )
+    );
+  }
+
   const selectedEdges: (SimilarityEdge & { other: string })[] =
     React.useMemo(() => {
       if (!selectedNode) return [];
@@ -392,6 +463,21 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
     ? result.nodes.find((n) => n.id === selectedNode)
     : null;
 
+  // The strongest-edges list as one sentence, announced to screen readers
+  // whenever a word is selected (Enter/Space or click).
+  const selectedSummary = selectedNodeData
+    ? `${selectedNodeData.id.replace(/_+$/, "")}, strongest edges (${METRIC_LABEL[metric]}): ${
+        selectedEdges
+          .map(
+            (e) =>
+              `${e.other.replace(/_+$/, "")} ${
+                metric === "cooc" ? e[metric] : e[metric].toFixed(3)
+              }`
+          )
+          .join(", ") || "none"
+      }.`
+    : "";
+
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -404,7 +490,10 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
         <Badge variant="secondary">
           {visible.edges.length}/{result.edges.length} edges
         </Badge>
-        <div className="ml-auto">
+        <div className="ml-auto flex gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => setLarge(true)}>
+            <Expand /> Large view
+          </Button>
           <Button variant="outline" size="sm" onClick={openExport}>
             <Download /> Download
           </Button>
@@ -413,11 +502,13 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
 
       {/* Controls */}
       <Card>
-        <CardContent className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Columns follow the card's own width, not the window's, so the
+            controls never squeeze below a readable size in the results pane. */}
+        <CardContent className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-4 p-4">
           <div className="grid gap-2">
-            <Label>Edge weight metric</Label>
+            <Label id="sim-metric-label">Edge weight metric</Label>
             <Select value={metric} onValueChange={(m) => setMetric(m as Metric)}>
-              <SelectTrigger>
+              <SelectTrigger aria-labelledby="sim-metric-label">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -434,6 +525,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               Min node freq: <span className="tabular-nums">{minFreq}</span>
             </Label>
             <Slider
+              aria-label="Min node freq"
               min={freqDomain.min}
               max={freqDomain.max}
               step={1}
@@ -449,6 +541,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               </span>
             </Label>
             <Slider
+              aria-label="Min edge weight"
               min={weightDomain.min}
               max={weightDomain.max}
               step={weightDomain.step}
@@ -456,7 +549,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               onValueChange={([v]) => setMinWeight(v)}
             />
           </div>
-          <div className="flex items-end justify-between gap-2 pb-1">
+          <div className="flex flex-wrap items-end justify-between gap-2 pb-1">
             <div className="grid gap-1.5">
               <label className="flex items-center gap-2 text-sm text-slate-700">
                 <Switch checked={treeOnly} onCheckedChange={setTreeOnly} />
@@ -482,7 +575,16 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               <Button
                 variant="outline"
                 size="icon"
-                onClick={() => setLayoutSeed((s) => s + 1)}
+                onClick={previousLayout}
+                disabled={seedHistory.length === 0}
+                aria-label="Previous layout"
+              >
+                <Undo2 />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={rerunLayout}
                 aria-label="Re-run layout"
               >
                 <RotateCw />
@@ -493,30 +595,52 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
       </Card>
 
       {/* Graph + side card */}
-      <div className="relative">
-        <Card>
+      <LargeView open={large} onClose={() => setLarge(false)}>
+        <Card className={large ? "min-h-0 flex-1" : undefined}>
           <svg
             ref={svgRef}
             viewBox={viewBox}
-            className="h-[520px] w-full cursor-grab rounded-lg active:cursor-grabbing"
-            role="img"
+            className={cn("w-full cursor-grab rounded-lg active:cursor-grabbing", large ? "h-full" : "h-[520px]")}
+            role="group"
             aria-label="Similarity network graph"
+            fontFamily={CHART_FONT}
             onClick={(e) => {
               if (e.target === e.currentTarget) setSelectedNode(null);
             }}
           >
             <g ref={zoomGroupRef} data-zoom-group="true">
-              {/* Community contours */}
-              {hulls.map((h) => (
-                <path
-                  key={h.community}
-                  d={h.path}
-                  fill={categoryColor(h.community)}
-                  fillOpacity={0.16}
-                  stroke={categoryColor(h.community)}
-                  strokeOpacity={0.35}
-                  strokeWidth={1.5}
-                />
+              {/* Community areas: one translucent layer per community, so a
+                  member's box and its bands merge into one even tint. */}
+              {areas.map((a) => (
+                <g
+                  key={a.community}
+                  opacity={0.16}
+                  fill={categoryColor(a.community)}
+                  stroke={categoryColor(a.community)}
+                >
+                  {a.bands.map((b, i) => (
+                    <line
+                      key={`l${i}`}
+                      x1={b.x1}
+                      y1={b.y1}
+                      x2={b.x2}
+                      y2={b.y2}
+                      strokeWidth={2 * AREA_BAND}
+                      strokeLinecap="round"
+                    />
+                  ))}
+                  {a.boxes.map((b, i) => (
+                    <rect
+                      key={`r${i}`}
+                      x={b.x}
+                      y={b.y}
+                      width={b.w}
+                      height={b.h}
+                      rx={AREA_PAD + 2}
+                      stroke="none"
+                    />
+                  ))}
+                </g>
               ))}
               {/* Edges */}
               {laidEdges.map((e, i) => {
@@ -530,7 +654,9 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                     y1={e.y1}
                     x2={e.x2}
                     y2={e.y2}
-                    stroke={inHood ? "#6366f1" : "#475569"}
+                    // The app's own indigo-500 (rose) and slate-600 (warm) from
+                    // tailwind.config.ts, not stock Tailwind's blue-violet/slate.
+                    stroke={inHood ? "#E23B80" : "#645047"}
                     strokeWidth={e.width}
                     strokeOpacity={
                       neighborhood ? (inHood ? 0.95 : 0.08) : 0.65
@@ -544,12 +670,12 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                 const dimmed = neighborhood ? !neighborhood.has(n.id) : false;
                 const color = showCommunities
                   ? categoryColor(n.community)
-                  : "#1e293b";
-                // A light palette fill (the #F0E442 yellow, 1.32:1 on white)
-                // gets a thin dark outline instead of the white halo, so the
-                // word stays readable on the white export ground; the
-                // community hue itself is unchanged (fillStroke, lib/palette).
-                const lightFill = fillStroke(color) !== color;
+                  : "#312621";
+                // Most palette hues fail AA as text on white (orange 2.25:1,
+                // sky blue 2.31:1). wordPaint (lib/palette) keeps the community
+                // hue on every word and puts at least 4.5:1 between the
+                // letters and their edge.
+                const paint = wordPaint(color, n.fontSize);
                 return (
                   <text
                     key={n.id}
@@ -559,23 +685,37 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                     dominantBaseline="middle"
                     fontSize={n.fontSize}
                     fontWeight={n.freq / maxFreq > 0.45 ? 700 : 600}
-                    fill={color}
+                    fill={paint.fill}
                     opacity={dimmed ? 0.15 : 1}
-                    stroke={lightFill ? fillStroke(color) : "#ffffff"}
-                    strokeWidth={
-                      lightFill ? Math.max(1.6, n.fontSize / 8) : Math.max(2, n.fontSize / 5)
-                    }
-                    strokeOpacity={dimmed ? 0 : 0.85}
+                    stroke={paint.stroke}
+                    strokeWidth={paint.strokeWidth}
+                    strokeOpacity={dimmed ? 0 : paint.strokeOpacity}
                     paintOrder="stroke"
                     className="cursor-pointer select-none"
                     textDecoration={
                       selectedNode === n.id ? "underline" : undefined
                     }
+                    // Keyboard path to the mouse reading: Tab to a word
+                    // highlights its neighborhood (like hover), Enter or Space
+                    // lists its strongest edges (like click), Escape closes it.
+                    tabIndex={0}
+                    role="button"
+                    aria-pressed={selectedNode === n.id}
                     onMouseEnter={() => setHoveredNode(n.id)}
                     onMouseLeave={() => setHoveredNode(null)}
+                    onFocus={() => setHoveredNode(n.id)}
+                    onBlur={() => setHoveredNode(null)}
                     onClick={(e) => {
                       e.stopPropagation();
                       setSelectedNode(n.id);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setSelectedNode(n.id);
+                      } else if (e.key === "Escape") {
+                        setSelectedNode(null);
+                      }
                     }}
                   >
                     {n.label}
@@ -585,6 +725,9 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
             </g>
           </svg>
         </Card>
+        <p className="sr-only" aria-live="polite">
+          {selectedSummary}
+        </p>
         {selectedNodeData && (
           <Card className="absolute right-3 top-3 w-60 shadow-lg">
             <CardContent className="p-3">
@@ -606,7 +749,7 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
-              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
                 Strongest edges ({METRIC_LABEL[metric]})
               </p>
               <ul className="max-h-48 space-y-0.5 overflow-y-auto text-xs">
@@ -624,17 +767,18 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
                   </li>
                 ))}
                 {selectedEdges.length === 0 && (
-                  <li className="py-2 text-slate-400">No edges.</li>
+                  <li className="py-2 text-slate-500">No edges.</li>
                 )}
               </ul>
             </CardContent>
           </Card>
         )}
-      </div>
-      <p className="text-xs text-slate-400">
-        Scroll to zoom, drag to pan. Hover a word to highlight its
-        neighborhood; click it to list its strongest edges. Download opens a
-        preview with a spacing control (SVG or PNG).
+      </LargeView>
+      <p className="text-xs text-slate-500">
+        Scroll to zoom, drag to pan. Hover a word, or Tab to it, to highlight
+        its neighborhood; click it or press Enter to list its strongest edges
+        (Esc closes the list). Download opens a preview with a spacing control
+        (SVG or PNG).
       </p>
 
       <ExportDialog
@@ -642,7 +786,12 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
         onOpenChange={setExportOpen}
         filename="similarity-network"
         getSvg={() => svgRef.current}
-        version={`${spread}|${metric}|${minFreq}|${minWeight}|${treeOnly}|${showCommunities}|${layoutSeed}`}
+        version={`${spread}|${metric}|${minFreq}|${minWeight}|${treeOnly}|${showCommunities}|${layoutSeed}|${JSON.stringify(handMoved)}`}
+        overlay={
+          moveByHand ? (
+            <LabelHandles handles={wordHandles} onMove={moveWord} />
+          ) : undefined
+        }
         controls={
           <div className="grid gap-2 sm:col-span-2">
             <Label>
@@ -650,12 +799,30 @@ export function SimilarityView({ result }: { result: SimilarityResult }) {
               <span className="tabular-nums">{spread.toFixed(2)}×</span>
             </Label>
             <Slider
+              aria-label="Word spacing"
               min={1}
               max={2.5}
               step={0.25}
               value={[spread]}
               onValueChange={([v]) => setSpread(v)}
             />
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <Switch checked={moveByHand} onCheckedChange={setMoveByHand} />
+                Move words by hand
+              </label>
+              {layoutHasHandMoved && (
+                <Button variant="ghost" size="sm" onClick={resetHandMoved}>
+                  <RotateCcw /> Reset moved words
+                </Button>
+              )}
+              {moveByHand && (
+                <p className="w-full text-xs text-slate-600">
+                  Drag a word in the preview, or Tab to it and use the arrow
+                  keys (hold Shift for bigger steps). Its links follow it.
+                </p>
+              )}
+            </div>
           </div>
         }
       />

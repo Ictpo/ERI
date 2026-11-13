@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   AlertTriangle,
+  ArrowLeft,
   FileUp,
   Loader2,
   Plus,
@@ -83,6 +84,12 @@ export function CorpusBuilder({
   const [csvColumn, setCsvColumn] = React.useState<string>("");
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const [confirmNewFile, setConfirmNewFile] = React.useState(false);
+  // A removal that would lose a document or filled-in values asks first.
+  const [pendingRemoval, setPendingRemoval] = React.useState<
+    | { kind: "doc"; index: number }
+    | { kind: "variable"; name: string; used: number }
+    | null
+  >(null);
 
   // Unsaved edits: every edit replaces `documents`/`variables` with a new
   // array, so they differ from the preview's own arrays once anything changed.
@@ -188,6 +195,13 @@ export function CorpusBuilder({
     );
   }
 
+  // Ask first only when filled-in values would be lost.
+  function askRemoveVariable(name: string) {
+    const used = documents.filter((d) => (d.variables[name] ?? "").trim()).length;
+    if (used === 0) removeVariable(name);
+    else setPendingRemoval({ kind: "variable", name, used });
+  }
+
   async function saveCorpus() {
     setSaving(true);
     try {
@@ -283,7 +297,15 @@ export function CorpusBuilder({
           {onCancel && !uploading && (
             <div className="mt-4 text-right">
               <Button variant="ghost" onClick={onCancel}>
-                <X /> Keep current corpus
+                {hasExistingCorpus ? (
+                  <>
+                    <X /> Keep current corpus
+                  </>
+                ) : (
+                  <>
+                    <ArrowLeft /> Back
+                  </>
+                )}
               </Button>
             </div>
           )}
@@ -304,9 +326,9 @@ export function CorpusBuilder({
         </CardHeader>
         <CardContent className="grid gap-4">
           <div className="grid gap-2">
-            <Label>Text column</Label>
+            <Label id="csv-text-column-label">Text column</Label>
             <Select value={csvColumn} onValueChange={setCsvColumn}>
-              <SelectTrigger>
+              <SelectTrigger aria-labelledby="csv-text-column-label">
                 <SelectValue placeholder="Select a column" />
               </SelectTrigger>
               <SelectContent>
@@ -343,8 +365,8 @@ export function CorpusBuilder({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">Review corpus</h2>
-          <p className="text-sm text-slate-500">
+          <h2 className="font-display text-lg font-semibold tracking-tight">Review corpus</h2>
+          <p className="text-sm text-slate-600">
             {documents.length} document{documents.length === 1 ? "" : "s"},{" "}
             {variables.length} variable{variables.length === 1 ? "" : "s"}. Edit
             cells before saving.
@@ -387,7 +409,7 @@ export function CorpusBuilder({
           >
             {variable}
             <button
-              onClick={() => removeVariable(variable)}
+              onClick={() => askRemoveVariable(variable)}
               aria-label={`Remove variable ${variable}`}
               className="rounded-full p-0.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
             >
@@ -424,7 +446,7 @@ export function CorpusBuilder({
                 const index = start + offset;
                 return (
                 <tr key={index} className="group hover:bg-slate-50/60">
-                  <td className="border-b border-slate-100 px-3 py-2 text-xs text-slate-400">
+                  <td className="border-b border-slate-100 px-3 py-2 text-xs text-slate-500">
                     {index + 1}
                   </td>
                   <td className="border-b border-slate-100 px-3 py-2">
@@ -434,7 +456,7 @@ export function CorpusBuilder({
                       title="Click to view and edit the full text"
                     >
                       {truncate(doc.text, 110) || (
-                        <span className="italic text-slate-400">empty</span>
+                        <span className="italic text-slate-500">empty</span>
                       )}
                     </button>
                   </td>
@@ -454,7 +476,7 @@ export function CorpusBuilder({
                   ))}
                   <td className="border-b border-slate-100 px-2 py-1.5">
                     <button
-                      onClick={() => removeDocument(index)}
+                      onClick={() => setPendingRemoval({ kind: "doc", index })}
                       aria-label="Remove document"
                       className="rounded p-1 text-slate-300 opacity-0 transition-opacity hover:text-red-600 focus-visible:opacity-100 group-hover:opacity-100"
                     >
@@ -468,7 +490,7 @@ export function CorpusBuilder({
                 <tr>
                   <td
                     colSpan={variables.length + 3}
-                    className="px-3 py-10 text-center text-sm text-slate-400"
+                    className="px-3 py-10 text-center text-sm text-slate-500"
                   >
                     All documents removed. Upload a different file.
                   </td>
@@ -565,6 +587,30 @@ export function CorpusBuilder({
           setStep({ kind: "pick" });
         }}
         onCancel={() => setConfirmNewFile(false)}
+      />
+
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        title={
+          pendingRemoval?.kind === "variable"
+            ? `Delete variable ${pendingRemoval.name}?`
+            : `Delete document ${(pendingRemoval?.index ?? 0) + 1}?`
+        }
+        description={
+          pendingRemoval?.kind === "variable"
+            ? `Its values will be removed from ${pendingRemoval.used} document${
+                pendingRemoval.used === 1 ? "" : "s"
+              }. This cannot be undone.`
+            : "Its text and variable values will be removed from this corpus. This cannot be undone."
+        }
+        confirmLabel="Delete"
+        onConfirm={() => {
+          const r = pendingRemoval;
+          setPendingRemoval(null);
+          if (r?.kind === "variable") removeVariable(r.name);
+          else if (r) removeDocument(r.index);
+        }}
+        onCancel={() => setPendingRemoval(null)}
       />
     </div>
   );

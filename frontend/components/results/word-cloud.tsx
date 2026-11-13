@@ -2,9 +2,12 @@
 
 import * as React from "react";
 import cloud from "d3-cloud";
-import { Download, Search } from "lucide-react";
-import { PALETTE } from "@/lib/palette";
+import { randomLcg } from "d3";
+import { Download, Expand, Search } from "lucide-react";
+import { TEXT_HUES } from "@/lib/palette";
+import { CHART_FONT } from "@/lib/export";
 import { ExportDialog } from "./export-dialog";
+import { LargeView } from "./large-view";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,9 +27,15 @@ type PlacedWord = {
 
 const WIDTH = 760;
 const HEIGHT = 480;
-// Word-cloud colours encode nothing (they rotate by rank), so the palette's
-// light yellow (#F0E442, 1.32:1 on white) and its black are left out.
-const CLOUD_COLORS = PALETTE.filter((c) => c !== "#F0E442" && c !== "#000000");
+// Blank border round the cloud, so no word touches the figure's edge.
+const MARGIN = 12;
+// Drawn weight; d3-cloud must measure words at it too, or bold words overrun.
+const WEIGHT = 600;
+// Word-cloud colours encode nothing (they rotate by rank), so only the palette
+// hues readable as small text on white are used (TEXT_HUES: blue, black).
+// Orange (2.25:1) and sky blue (2.31:1) left a third of the small words
+// below AA.
+const CLOUD_COLORS = TEXT_HUES;
 
 export function WordCloud({ words }: { words: CloudWord[] }) {
   // The slider spans every word the analysis returned (the launcher's "Max
@@ -37,6 +46,8 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
   const [placed, setPlaced] = React.useState<PlacedWord[]>([]);
   const [computing, setComputing] = React.useState(false);
   const [exportOpen, setExportOpen] = React.useState(false);
+  // Large view: the cloud in a window-sized panel, so small words can be read.
+  const [large, setLarge] = React.useState(false);
   const svgRef = React.useRef<SVGSVGElement>(null);
 
   const selection = React.useMemo(() => {
@@ -63,8 +74,11 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
       return 12 + t * 52;
     };
 
+    // Seeded, so the same words and settings always give the same cloud,
+    // and a figure used in a draft can be made again for a revision.
+    const rng = randomLcg(0.42);
     const layout = cloud()
-      .size([WIDTH, HEIGHT])
+      .size([WIDTH - 2 * MARGIN, HEIGHT - 2 * MARGIN])
       .words(
         selection.map((w) => ({
           // Strip protection underscores BEFORE layout so the computed
@@ -74,8 +88,10 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
         }))
       )
       .padding(2)
-      .rotate(() => (Math.random() < 0.25 ? 90 : 0))
-      .font("Inter, system-ui, sans-serif")
+      .random(rng)
+      .rotate(() => (rng() < 0.25 ? 90 : 0))
+      .font(CHART_FONT)
+      .fontWeight(WEIGHT)
       .fontSize((d) => d.size ?? 12)
       .on("end", (laidOut) => {
         setPlaced(
@@ -107,6 +123,7 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
             </span>
           </Label>
           <Slider
+            aria-label="Max words"
             min={10}
             max={sliderMax}
             step={5}
@@ -123,6 +140,9 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
             onChange={(e) => setFilter(e.target.value)}
           />
         </div>
+        <Button variant="outline" size="sm" onClick={() => setLarge(true)}>
+          <Expand /> Large view
+        </Button>
         <Button
           variant="outline"
           size="sm"
@@ -143,14 +163,15 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
       <Card>
         <CardContent className="p-2">
           {selection.length === 0 ? (
-            <p className="py-16 text-center text-sm text-slate-400">
+            <p className="py-16 text-center text-sm text-slate-500">
               No words match the current filter.
             </p>
           ) : (
+            <LargeView open={large} onClose={() => setLarge(false)}>
             <svg
               ref={svgRef}
               viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-              className="h-auto w-full"
+              className={large ? "min-h-0 w-full flex-1" : "h-auto w-full"}
               role="img"
               aria-label="Word cloud"
             >
@@ -161,8 +182,8 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
                     textAnchor="middle"
                     transform={`translate(${w.x},${w.y}) rotate(${w.rotate})`}
                     fontSize={w.size}
-                    fontFamily="Inter, system-ui, sans-serif"
-                    fontWeight={600}
+                    fontFamily={CHART_FONT}
+                    fontWeight={WEIGHT}
                     fill={w.color}
                     opacity={computing ? 0.35 : 1}
                   >
@@ -171,6 +192,7 @@ export function WordCloud({ words }: { words: CloudWord[] }) {
                 ))}
               </g>
             </svg>
+            </LargeView>
           )}
         </CardContent>
       </Card>

@@ -27,7 +27,9 @@
   ALWAYS grep the component's `export {` line before authoring — do not assume
   shadcn sub-component names exist.
 - Real Button variants: default, secondary, outline, ghost, destructive, link.
-  Sizes: default, sm, lg, icon. Primary color is indigo-600.
+  Sizes: default, sm, lg, icon. Primary color is indigo-600, which RENDERS
+  ROSE (#D6266F): tailwind.config.ts overrides `indigo-*` (rose) and
+  `slate-*` (warm neutrals).
 - Alert variants: default, warning, destructive, info.
 - Badge variants: default, secondary, outline, success, warning (+ more — grep).
 

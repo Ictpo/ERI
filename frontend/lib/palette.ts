@@ -47,3 +47,37 @@ export function readableTextOn(hex: string): string {
 export function fillStroke(hex: string): string {
   return luminance(hex) > 0.45 ? "#0f172a" : hex;
 }
+
+/** WCAG 2.x contrast of a #rrggbb colour against the white export ground. */
+export function contrastOnWhite(hex: string): number {
+  return 1.05 / (luminance(hex) + 0.05);
+}
+
+/**
+ * Palette hues readable as small text on white (AA, 4.5:1): blue and black.
+ * For words whose colour encodes nothing (the word cloud).
+ */
+export const TEXT_HUES: readonly string[] = PALETTE.filter(
+  (c) => contrastOnWhite(c) >= 4.5
+);
+
+export type WordPaint = {
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  strokeOpacity: number;
+};
+
+/**
+ * Paint for a word whose colour IS a category (network communities). A hue
+ * at AA on white (blue, black) is the letters, with the usual white halo.
+ * A lighter hue (orange 2.25:1, sky blue 2.31:1, ...) becomes the halo and
+ * the letters take readableTextOn(hue): the community stays on every word,
+ * the Okabe-Ito hue is unchanged, and letters and halo are >= 4.5:1 apart.
+ */
+export function wordPaint(hue: string, fontSize: number): WordPaint {
+  if (contrastOnWhite(hue) >= 4.5) {
+    return { fill: hue, stroke: "#ffffff", strokeWidth: Math.max(2, fontSize / 5), strokeOpacity: 0.85 };
+  }
+  return { fill: readableTextOn(hue), stroke: hue, strokeWidth: Math.max(3, fontSize / 4), strokeOpacity: 1 };
+}

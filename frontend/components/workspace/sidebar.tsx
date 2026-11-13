@@ -118,7 +118,7 @@ export function Sidebar({
           </TooltipTrigger>
           <TooltipContent side="bottom">All projects</TooltipContent>
         </Tooltip>
-        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={project.name}>
+        <h2 className="min-w-0 flex-1 truncate font-display text-sm font-semibold" title={project.name}>
           {project.name}
         </h2>
         <Button
@@ -134,7 +134,7 @@ export function Sidebar({
 
       {/* Corpus section */}
       <div className="border-b border-slate-100 p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
           Corpus
         </p>
         {summary ? (
@@ -164,11 +164,11 @@ export function Sidebar({
 
       {/* Analyses history */}
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
           Analyses
         </p>
         {analyses.length === 0 ? (
-          <p className="px-1 text-xs text-slate-400">
+          <p className="px-1 text-xs text-slate-500">
             No analyses yet. Configure one in the center pane.
           </p>
         ) : (
@@ -196,7 +196,7 @@ export function Sidebar({
                       </span>
                       <StatusDot status={analysis.status} />
                     </span>
-                    <span className="mt-0.5 block pl-6 text-[11px] text-slate-400">
+                    <span className="mt-0.5 block pl-6 text-[11px] text-slate-600">
                       {formatDate(analysis.created_at)} · {langLabel(analysis)}
                       {ranOnEarlierCorpus(analysis, summary) && (
                         <span className="text-amber-700"> · earlier corpus</span>
@@ -235,7 +235,7 @@ export function Sidebar({
       </div>
 
       <div className="hidden border-t border-slate-100 p-2 md:block">
-        <p className="flex items-center gap-1 px-1 text-[11px] text-slate-300">
+        <p className="flex items-center gap-1 px-1 text-[11px] text-slate-500">
           <ChevronRight className="h-3 w-3" />
           Click an analysis to open its result
         </p>

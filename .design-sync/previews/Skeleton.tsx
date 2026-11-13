@@ -8,7 +8,7 @@ export const Card = () => (
       gap: 10,
       width: 320,
       padding: 16,
-      border: "1px solid #e2e8f0",
+      border: "1px solid #ECDFD6", // slate-200 (warm Border)
       borderRadius: 8,
     }}
   >

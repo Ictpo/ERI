@@ -70,7 +70,7 @@ export function ResultsPane({
           <FlaskConical className="h-8 w-8 text-slate-300" />
         </div>
         <p className="font-medium text-slate-600">No result open</p>
-        <p className="mt-1 max-w-xs text-sm text-slate-400">
+        <p className="mt-1 max-w-xs text-sm text-slate-500">
           Run an analysis from the center pane, or pick one from the history in
           the sidebar.
         </p>
@@ -90,7 +90,7 @@ export function ResultsPane({
             feedback and stay in BOTH modes. */}
         <EriLoader label={`${meta.label} running…`} />
         <p className="mt-4 text-sm text-slate-500">
-          {event?.message || "Waiting for progress events…"}
+          {event?.message || "Starting the analysis…"}
         </p>
         <div className="mt-5 w-full max-w-sm">
           <div className="h-2 w-full overflow-hidden rounded-full bg-slate-200">
@@ -99,7 +99,7 @@ export function ResultsPane({
               style={{ width: `${pct}%` }}
             />
           </div>
-          <div className="mt-1.5 flex justify-between text-xs text-slate-400">
+          <div className="mt-1.5 flex justify-between text-xs text-slate-500">
             <span>{event?.stage ?? "queued"}</span>
             <span>{pct}%</span>
           </div>
@@ -148,8 +148,8 @@ export function ResultsPane({
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-lg font-semibold tracking-tight">{meta.label}</h2>
-        <p className="text-sm text-slate-400">
+        <h2 className="font-display text-lg font-semibold tracking-tight">{meta.label}</h2>
+        <p className="text-sm text-slate-500">
           Finished{" "}
           {analysis.finished_at
             ? formatDate(analysis.finished_at)
@@ -181,7 +181,11 @@ export function ResultsPane({
         />
       )}
       {analysis.type === "afc" && (
-        <AfcView key={analysis.id} result={analysis.result as AfcResult} />
+        <AfcView
+          key={analysis.id}
+          result={analysis.result as AfcResult}
+          variable={String((analysis.params as { variable?: unknown }).variable ?? "")}
+        />
       )}
     </div>
   );

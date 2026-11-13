@@ -14,7 +14,16 @@ const PAGE_SIZE = 50;
 
 type SortKey = "form" | "freq" | "docs";
 
-function StatTile({ label, value }: { label: string; value: number }) {
+function StatTile({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: number;
+  /** A short line saying what exactly the number counts. */
+  note?: string;
+}) {
   return (
     <Card>
       <CardContent className="p-4">
@@ -22,6 +31,7 @@ function StatTile({ label, value }: { label: string; value: number }) {
           {formatNumber(value)}
         </p>
         <p className="mt-0.5 text-xs text-slate-500">{label}</p>
+        {note && <p className="mt-1 text-[11px] leading-snug text-slate-500">{note}</p>}
       </CardContent>
     </Card>
   );
@@ -33,6 +43,19 @@ export function StatsView({ result }: { result: StatsResult }) {
   const [sortKey, setSortKey] = React.useState<SortKey>("freq");
   const [sortAsc, setSortAsc] = React.useState(false);
   const [hapaxOpen, setHapaxOpen] = React.useState(false);
+  // The cloud mounts the first time its tab opens, then stays mounted (hidden
+  // behind other tabs) so its settings and layout survive switching tabs.
+  const [cloudOpened, setCloudOpened] = React.useState(false);
+  // "By variable" in natural order within each variable (respondent 2 before
+  // 10); variables keep the engine's order.
+  const byVariable = React.useMemo(() => {
+    const order = new Map<string, number>();
+    for (const r of result.by_variable) if (!order.has(r.variable)) order.set(r.variable, order.size);
+    return [...result.by_variable].sort((a, b) =>
+      order.get(a.variable)! - order.get(b.variable)! ||
+      a.modality.localeCompare(b.modality, undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [result.by_variable]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -83,7 +106,12 @@ export function StatsView({ result }: { result: StatsResult }) {
   }
 
   return (
-    <Tabs defaultValue="overview">
+    <Tabs
+      defaultValue="overview"
+      onValueChange={(tab) => {
+        if (tab === "cloud") setCloudOpened(true);
+      }}
+    >
       <TabsList>
         <TabsTrigger value="overview">Overview</TabsTrigger>
         <TabsTrigger value="frequencies">Frequencies</TabsTrigger>
@@ -94,8 +122,16 @@ export function StatsView({ result }: { result: StatsResult }) {
       <TabsContent value="overview" className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-3">
           <StatTile label="Total tokens" value={result.total_tokens} />
-          <StatTile label="Unique forms" value={result.unique_forms} />
-          <StatTile label="Hapax legomena" value={result.hapax_count} />
+          <StatTile
+            label="Distinct forms analysed"
+            note="After this run's lemma and stopword settings (shown above). The sidebar counts forms before them."
+            value={result.unique_forms}
+          />
+          <StatTile
+            label="Forms used only once"
+            note="hapax legomena"
+            value={result.hapax_count}
+          />
         </div>
         <Card>
           <CardHeader className="pb-3">
@@ -119,7 +155,7 @@ export function StatsView({ result }: { result: StatsResult }) {
           {hapaxOpen && (
             <CardContent>
               {result.hapax.length === 0 ? (
-                <p className="text-sm text-slate-400">No hapax in this corpus.</p>
+                <p className="text-sm text-slate-500">No hapax in this corpus.</p>
               ) : (
                 <div className="max-h-56 overflow-y-auto rounded-md bg-slate-50 p-3">
                   <p className="text-xs leading-6 text-slate-600">
@@ -178,7 +214,7 @@ export function StatsView({ result }: { result: StatsResult }) {
                 <tr>
                   <td
                     colSpan={3}
-                    className="px-4 py-8 text-center text-sm text-slate-400"
+                    className="px-4 py-8 text-center text-sm text-slate-500"
                   >
                     No forms match “{query}”.
                   </td>
@@ -217,7 +253,7 @@ export function StatsView({ result }: { result: StatsResult }) {
 
       <TabsContent value="variables">
         {result.by_variable.length === 0 ? (
-          <p className="py-8 text-center text-sm text-slate-400">
+          <p className="py-8 text-center text-sm text-slate-500">
             This corpus has no variables.
           </p>
         ) : (
@@ -240,7 +276,7 @@ export function StatsView({ result }: { result: StatsResult }) {
                 </tr>
               </thead>
               <tbody>
-                {result.by_variable.map((row, i) => (
+                {byVariable.map((row, i) => (
                   <tr key={i} className="hover:bg-slate-50/60">
                     <td className="border-b border-slate-100 px-4 py-1.5 text-slate-500">
                       {row.variable}
@@ -262,8 +298,12 @@ export function StatsView({ result }: { result: StatsResult }) {
         )}
       </TabsContent>
 
-      <TabsContent value="cloud">
-        <WordCloud words={result.cloud} />
+      <TabsContent
+        value="cloud"
+        forceMount
+        className="data-[state=inactive]:hidden"
+      >
+        {cloudOpened && <WordCloud words={result.cloud} />}
       </TabsContent>
     </Tabs>
   );

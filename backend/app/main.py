@@ -6,6 +6,7 @@ import sys
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -20,7 +21,7 @@ from .jobs import manager
 from .nlp.corpus_parse import parse_csv, parse_txt
 from .nlp.tokenize import raw_tokens
 
-VERSION = "2.3.1"  # keep equal to the release tag (CLAUDE.md step 7)
+VERSION = "3.0.0"  # keep equal to the release tag (CLAUDE.md step 7)
 
 
 from contextlib import asynccontextmanager
@@ -101,7 +102,9 @@ class AnalysisIn(BaseModel):
 
 
 class SettingsIn(BaseModel):
-    plain_mode: bool
+    # Every field is optional: a PUT changes only the fields it sends.
+    plain_mode: bool | None = None
+    export_format: Literal["svg", "png"] | None = None
 
 
 # Analysis modules (and with them numpy, scipy and networkx) are imported on
@@ -166,15 +169,25 @@ def health():
     return {"ok": True, "version": VERSION}
 
 
+def _settings() -> dict:
+    return {
+        "plain_mode": storage.get_setting("plain_mode") == "1",
+        "export_format": "png" if storage.get_setting("export_format") == "png" else "svg",
+    }
+
+
 @app.get("/api/settings")
 def settings_get():
-    return {"plain_mode": storage.get_setting("plain_mode") == "1"}
+    return _settings()
 
 
 @app.put("/api/settings")
 def settings_put(body: SettingsIn):
-    storage.set_setting("plain_mode", "1" if body.plain_mode else "0")
-    return {"plain_mode": body.plain_mode}
+    if body.plain_mode is not None:
+        storage.set_setting("plain_mode", "1" if body.plain_mode else "0")
+    if body.export_format is not None:
+        storage.set_setting("export_format", body.export_format)
+    return _settings()
 
 
 @app.get("/api/projects")

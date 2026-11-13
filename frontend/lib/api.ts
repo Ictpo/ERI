@@ -150,8 +150,9 @@ export const api = {
 
   // App settings — kept server-side because the desktop webview keeps no
   // localStorage between launches (private mode, new port every launch).
+  // PUT changes only the fields sent.
   getSettings: () => request<Settings>("/settings"),
-  saveSettings: (settings: Settings) =>
+  saveSettings: (settings: Partial<Settings>) =>
     request<Settings>("/settings", {
       method: "PUT",
       body: JSON.stringify(settings),

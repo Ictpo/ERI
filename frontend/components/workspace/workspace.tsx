@@ -11,6 +11,7 @@ import type {
   ProjectDetail,
 } from "@/lib/types";
 import { toastError } from "@/lib/toast-error";
+import { cn } from "@/lib/utils";
 import { toast } from "@/components/ui/use-toast";
 import { Sidebar } from "./sidebar";
 import { CorpusBuilder } from "./corpus-builder";
@@ -308,6 +309,9 @@ export function Workspace({ projectId }: { projectId: string }) {
 
   const hasCorpus = project.corpus_summary !== null && builderMode === null;
   const openAnalysis = analyses.find((a) => a.id === openAnalysisId) ?? null;
+  // While the corpus is being built there is no result to show, so the
+  // builder gets the full width, unless the user opens a past result.
+  const showResults = hasCorpus || openAnalysis !== null;
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -323,7 +327,12 @@ export function Workspace({ projectId }: { projectId: string }) {
         />
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden lg:flex-row">
           {/* CENTER: configuration */}
-          <section className="min-h-0 flex-1 overflow-y-auto p-6 lg:max-w-[55%]">
+          <section
+            className={cn(
+              "min-h-0 flex-1 overflow-y-auto p-6",
+              showResults && "lg:max-w-[55%]"
+            )}
+          >
             {hasCorpus && project.corpus_summary ? (
               <AnalysisLauncher
                 corpusSummary={project.corpus_summary}
@@ -360,19 +369,21 @@ export function Workspace({ projectId }: { projectId: string }) {
             )}
           </section>
           {/* RIGHT: results viewer */}
-          <section className="min-h-[50vh] flex-1 overflow-y-auto border-t border-slate-200 bg-white p-6 lg:min-h-0 lg:min-w-[45%] lg:border-l lg:border-t-0">
-            <ResultsPane
-              analysis={openAnalysis}
-              event={openAnalysis ? progress[openAnalysis.id] : undefined}
-              corpus={project.corpus_summary}
-              resultFailed={
-                openAnalysis ? failedFetches.has(openAnalysis.id) : false
-              }
-              onRetryFetch={
-                openAnalysis ? () => refreshAnalysis(openAnalysis.id) : undefined
-              }
-            />
-          </section>
+          {showResults && (
+            <section className="min-h-[50vh] flex-1 overflow-y-auto border-t border-slate-200 bg-white p-6 lg:min-h-0 lg:min-w-[45%] lg:border-l lg:border-t-0">
+              <ResultsPane
+                analysis={openAnalysis}
+                event={openAnalysis ? progress[openAnalysis.id] : undefined}
+                corpus={project.corpus_summary}
+                resultFailed={
+                  openAnalysis ? failedFetches.has(openAnalysis.id) : false
+                }
+                onRetryFetch={
+                  openAnalysis ? () => refreshAnalysis(openAnalysis.id) : undefined
+                }
+              />
+            </section>
+          )}
         </div>
       </div>
       <ConfirmDialog
@@ -402,10 +413,10 @@ function CorpusModeChooser({
   return (
     <div className="mx-auto max-w-xl space-y-4 pt-6">
       <div>
-        <h2 className="text-xl font-semibold tracking-tight">
+        <h2 className="font-display text-xl font-semibold tracking-tight">
           {hasCorpus ? "Replace or edit the corpus" : "Build your corpus"}
         </h2>
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-slate-600">
           Upload a prepared file, or compose it document by document.
         </p>
       </div>

@@ -2,25 +2,33 @@
 
 import * as React from "react";
 import * as d3 from "d3";
-import { Download, List, BarChartHorizontal } from "lucide-react";
+import { Download, Expand, List, BarChartHorizontal, Shrink } from "lucide-react";
 import type { ChdClass, ChdNode, ChdResult } from "@/lib/types";
 import { categoryColor, fillStroke, readableTextOn } from "@/lib/palette";
+import { CHART_FONT } from "@/lib/export";
 import { cn, formatNumber } from "@/lib/utils";
 import { ExportDialog } from "./export-dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider";
 
-/* Classic academic vertical dendrogram:
-   root at top, orthogonal connectors, terminal classes on a uniform
-   baseline, and a word / freq / chi2 table stacked under each class. */
+/* Classic academic vertical dendrogram: root at top, orthogonal connectors,
+   classes on a uniform baseline. Under it, one word / freq / chi2 table per
+   class (tree order, headed by its class colour), wrapped into rows so the
+   figure stays ~760 wide and its type readable on a page. Forms are never cut. */
 
-const COL_W = 168;
-const TABLE_COL = { word: 78, freq: 34, chi2: 44 };
-const HEADER_H = 40;
-const ROW_H = 14.5;
-const TABLE_HEAD_H = 15;
+const COL_W = 84; // one leaf: a box with "Class N" and its %
+const HEADER_H = 36;
+const WORD_FS = 11;
+const ROW_H = 16;
+const STRIP_H = 22; // class strip heading each table
+const TABLE_HEAD_H = 17;
+const TABLE_COL = { pad: 6, gap: 10, freq: 34, chi2: 46 };
+const GAP = 16; // below the class boxes, and between tables
+const TARGET_W = 760; // tables wrap to fit this width
 const MAX_WORDS = 18;
 const MARGIN = { top: 14, right: 16, bottom: 14, left: 16 };
 
@@ -29,7 +37,10 @@ type Leaf = {
   cls: ChdClass | null;
   cx: number; // column center x
   size: number;
+  slot: number; // position of its table in the grid; -1 when none
 };
+const stripText = (cls: ChdClass, size: number) =>
+  `Class ${cls.id} · ${cls.pct.toFixed(1)}% · ${formatNumber(size)} segments`;
 
 type Junction = { barY: number; x1: number; x2: number; drops: { x: number; toY: number }[] };
 
@@ -38,7 +49,19 @@ export function ChdView({ result }: { result: ChdResult }) {
     result.classes[0]?.id ?? null
   );
   const [exportOpen, setExportOpen] = React.useState(false);
+  const [maxWords, setMaxWords] = React.useState(MAX_WORDS);
+  // Fit the tree to the pane by default so every class shows; "Actual size" scrolls.
+  const [fitWidth, setFitWidth] = React.useState(true);
   const svgRef = React.useRef<SVGSVGElement>(null);
+  // Text width in the chart font, so tables fit their longest form.
+  const measure = React.useMemo(() => {
+    const ctx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
+    return (text: string, size: number, weight: number) => {
+      if (!ctx) return text.length * size * 0.62;
+      ctx.font = `${weight} ${size}px ${CHART_FONT}`;
+      return ctx.measureText(text).width;
+    };
+  }, []);
 
   const classById = React.useMemo(() => {
     const map = new Map<number, ChdClass>();
@@ -55,22 +78,46 @@ export function ChdView({ result }: { result: ChdResult }) {
     [result.classes]
   );
 
-  const { leaves, junctions, width, height, baselineY, tableRows } =
+  const { leaves, junctions, width, height, baselineY, tableRows, tableW, wordW, tableAt } =
     React.useMemo(() => {
       const root = d3.hierarchy<ChdNode>(result.tree, (d) => d.children ?? null);
       const leafNodes = root.leaves();
       const nLeaves = leafNodes.length;
-      const width = MARGIN.left + MARGIN.right + nLeaves * COL_W;
+      const leafCls = leafNodes.map((leaf) =>
+        leaf.data.class_id !== null ? classById.get(leaf.data.class_id) ?? null : null
+      );
+      const nTables = leafCls.filter((c) => c !== null).length;
 
       const maxDepth = Math.max(1, ...leafNodes.map((l) => l.depth));
       const treeH = Math.max(90, Math.min(220, 46 * maxDepth));
       const levelH = treeH / maxDepth;
       const baselineY = MARGIN.top + treeH;
+      // Tables: as wide as the longest form shown (and the strip text) needs.
+      const tableRows = Math.min(maxWords, Math.max(1, ...result.classes.map((c) => c.words.length)));
+      const wordW = Math.max(60, ...result.classes.flatMap((c) =>
+        c.words.slice(0, maxWords).map((w) => measure(w.form.replace(/_+$/, ""), WORD_FS, 500) + 4)));
+      const stripW = Math.max(0, ...leafNodes.map((leaf, i) => {
+        const cls = leafCls[i];
+        return cls ? measure(stripText(cls, leaf.data.size), 11, 700) + 4 : 0;
+      }));
+      const tableW = Math.max(
+        2 * TABLE_COL.pad + wordW + 2 * TABLE_COL.gap + TABLE_COL.freq + TABLE_COL.chi2,
+        2 * TABLE_COL.pad + stripW
+      );
+      // As many tables to a row as fit TARGET_W (or the tree, if wider).
+      const treeW = nLeaves * COL_W;
+      const perRow = Math.max(1, Math.min(Math.max(1, nTables),
+        Math.floor((Math.max(TARGET_W - MARGIN.left - MARGIN.right, treeW) + GAP) / (tableW + GAP))));
+      const tablesW = perRow * tableW + (perRow - 1) * GAP;
+      const innerW = Math.max(treeW, tablesW);
+      const width = MARGIN.left + MARGIN.right + innerW;
+      const treeX = MARGIN.left + (innerW - treeW) / 2;
+      const tablesX = MARGIN.left + (innerW - tablesW) / 2;
 
       // Leaf columns, in tree order.
       const leafX = new Map<d3.HierarchyNode<ChdNode>, number>();
       leafNodes.forEach((leaf, i) => {
-        leafX.set(leaf, MARGIN.left + i * COL_W + COL_W / 2);
+        leafX.set(leaf, treeX + i * COL_W + COL_W / 2);
       });
 
       // Internal node x = midpoint of its children's x; computed bottom-up.
@@ -106,29 +153,27 @@ export function ChdView({ result }: { result: ChdResult }) {
         });
       });
 
-      const leaves: Leaf[] = leafNodes.map((leaf) => ({
+      let slot = 0;
+      const leaves: Leaf[] = leafNodes.map((leaf, i) => ({
         classId: leaf.data.class_id,
-        cls:
-          leaf.data.class_id !== null
-            ? classById.get(leaf.data.class_id) ?? null
-            : null,
+        cls: leafCls[i],
         cx: leafX.get(leaf) ?? 0,
         size: leaf.data.size,
+        slot: leafCls[i] ? slot++ : -1,
       }));
 
-      const tableRows = Math.min(
-        MAX_WORDS,
-        Math.max(1, ...result.classes.map((c) => c.words.length))
-      );
-      const height =
-        baselineY +
-        HEADER_H +
-        TABLE_HEAD_H +
-        tableRows * ROW_H +
-        MARGIN.bottom;
+      // Tables in tree order, perRow to a row, under the class boxes.
+      const tableH = STRIP_H + TABLE_HEAD_H + tableRows * ROW_H + 6;
+      const tablesTop = baselineY + HEADER_H + GAP;
+      const nRows = Math.max(1, Math.ceil(nTables / perRow));
+      const tableAt = (s: number) => ({
+        x: tablesX + (s % perRow) * (tableW + GAP),
+        y: tablesTop + Math.floor(s / perRow) * (tableH + GAP),
+      });
+      const height = tablesTop + nRows * tableH + (nRows - 1) * GAP + MARGIN.bottom;
 
-      return { leaves, junctions, width, height, baselineY, tableRows };
-    }, [result.tree, result.classes, classById]);
+      return { leaves, junctions, width, height, baselineY, tableRows, tableW, wordW, tableAt };
+    }, [result.tree, result.classes, classById, maxWords, measure]);
 
   const selected =
     selectedClassId !== null ? classById.get(selectedClassId) : null;
@@ -148,7 +193,11 @@ export function ChdView({ result }: { result: ChdResult }) {
           {result.pct_classified.toFixed(1)}%)
         </Badge>
         <Badge variant="secondary">{result.classes.length} classes</Badge>
-        <div className="ml-auto">
+        <div className="ml-auto flex gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => setFitWidth((v) => !v)}>
+            {fitWidth ? <Expand /> : <Shrink />}
+            {fitWidth ? "Actual size" : "Fit to pane"}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -164,21 +213,28 @@ export function ChdView({ result }: { result: ChdResult }) {
         onOpenChange={setExportOpen}
         filename="chd-dendrogram"
         getSvg={() => svgRef.current}
-        version={`${result.classes.length}|${selectedClassId}`}
+        version={`${result.classes.length}|${selectedClassId}|${maxWords}`}
+        controls={
+          <div className="grid gap-2 sm:col-span-2">
+            <Label>Words per class: <span className="tabular-nums">{maxWords}</span></Label>
+            <Slider aria-label="Words per class" min={5} max={30} step={1} value={[maxWords]} onValueChange={([v]) => setMaxWords(v)} />
+          </div>
+        }
       />
 
       {/* Dendrogram */}
       <Card>
-        <CardContent className="overflow-x-auto p-2">
+        <CardContent className={cn("p-2", !fitWidth && "overflow-x-auto")}>
           <svg
             ref={svgRef}
             viewBox={`0 0 ${width} ${height}`}
-            width={width}
-            height={height}
-            className="mx-auto block"
+            width={fitWidth ? undefined : width}
+            height={fitWidth ? undefined : height}
+            className={cn("mx-auto block", fitWidth && "h-auto w-full")}
+            style={fitWidth ? { maxWidth: width } : undefined}
             role="img"
             aria-label="CHD dendrogram"
-            fontFamily="Inter, system-ui, sans-serif"
+            fontFamily={CHART_FONT}
           >
             {/* Tree connectors */}
             {junctions.map((j, i) => (
@@ -195,13 +251,15 @@ export function ChdView({ result }: { result: ChdResult }) {
               const color = colorForClass(leaf.classId);
               const isSelected =
                 leaf.classId !== null && leaf.classId === selectedClassId;
-              const x0 = leaf.cx - (COL_W - 12) / 2;
-              const boxW = COL_W - 12;
-              const words = leaf.cls ? leaf.cls.words.slice(0, MAX_WORDS) : [];
+              const boxW = COL_W - 8;
+              const x0 = leaf.cx - boxW / 2;
+              const words = leaf.cls ? leaf.cls.words.slice(0, maxWords) : [];
+              const t = tableAt(Math.max(0, leaf.slot)); // this class's table
+              const ruleY = t.y + STRIP_H + TABLE_HEAD_H;
               const tableX = {
-                word: x0 + 5,
-                freq: x0 + TABLE_COL.word + TABLE_COL.freq,
-                chi2: x0 + boxW - 5,
+                word: t.x + TABLE_COL.pad,
+                freq: t.x + TABLE_COL.pad + wordW + TABLE_COL.gap + TABLE_COL.freq,
+                chi2: t.x + tableW - TABLE_COL.pad,
               };
               return (
                 <g
@@ -237,74 +295,72 @@ export function ChdView({ result }: { result: ChdResult }) {
                   )}
                   <text
                     x={leaf.cx}
-                    y={baselineY + 16}
+                    y={baselineY + 15}
                     textAnchor="middle"
-                    fontSize={12.5}
+                    fontSize={leaf.cls ? 12 : 9.5}
                     fontWeight={700}
                     fill={readableTextOn(color)}
                   >
                     {leaf.cls ? `Class ${leaf.cls.id}` : "Unclassified"}
-                    {leaf.cls ? ` — ${leaf.cls.pct.toFixed(1)}%` : ""}
                   </text>
                   <text
                     x={leaf.cx}
-                    y={baselineY + 30}
+                    y={baselineY + 29}
                     textAnchor="middle"
-                    fontSize={10}
+                    fontSize={leaf.cls ? 10.5 : 8.5}
                     fill={readableTextOn(color)}
                     fillOpacity={0.92}
                   >
-                    {formatNumber(leaf.size)} segments
+                    {leaf.cls
+                      ? `${leaf.cls.pct.toFixed(1)}%`
+                      : `${formatNumber(leaf.size)} segments`}
                   </text>
 
                   {/* Word table */}
                   {leaf.cls && (
                     <>
+                      <rect x={t.x} y={t.y} width={tableW} height={STRIP_H} fill={color}
+                        stroke={fillStroke(color)} strokeWidth={0.75} />
+                      <text x={t.x + TABLE_COL.pad} y={t.y + 15} fontSize={11} fontWeight={700} fill={readableTextOn(color)}>
+                        {stripText(leaf.cls, leaf.size)}
+                      </text>
                       <text
                         x={tableX.word}
-                        y={baselineY + HEADER_H + 11}
-                        fontSize={8}
+                        y={ruleY - 5}
+                        fontSize={9}
                         fontWeight={600}
-                        fill="#94a3b8"
+                        fill="#64748b"
                         letterSpacing="0.04em"
                       >
                         WORD
                       </text>
                       <text
                         x={tableX.freq}
-                        y={baselineY + HEADER_H + 11}
+                        y={ruleY - 5}
                         textAnchor="end"
-                        fontSize={8}
+                        fontSize={9}
                         fontWeight={600}
-                        fill="#94a3b8"
+                        fill="#64748b"
                         letterSpacing="0.04em"
                       >
                         FREQ
                       </text>
                       <text
                         x={tableX.chi2}
-                        y={baselineY + HEADER_H + 11}
+                        y={ruleY - 5}
                         textAnchor="end"
-                        fontSize={8}
+                        fontSize={9}
                         fontWeight={600}
-                        fill="#94a3b8"
+                        fill="#64748b"
                         letterSpacing="0.04em"
                       >
                         χ²
                       </text>
                       {words.map((w, r) => {
-                        const y =
-                          baselineY +
-                          HEADER_H +
-                          TABLE_HEAD_H +
-                          (r + 0.75) * ROW_H;
-                        const display = w.form.replace(/_+$/, "");
-                        const form =
-                          display.length > 12
-                            ? display.slice(0, 11) + "…"
-                            : display;
+                        const y = ruleY + (r + 0.75) * ROW_H;
+                        const form = w.form.replace(/_+$/, ""); // never cut
                         return (
-                          <g key={w.form} fontSize={9.5}>
+                          <g key={w.form} fontSize={WORD_FS}>
                             <text x={tableX.word} y={y} fill="#1e293b" fontWeight={500}>
                               {form}
                             </text>
@@ -329,20 +385,18 @@ export function ChdView({ result }: { result: ChdResult }) {
                       })}
                       {/* Column rule under the header strip */}
                       <line
-                        x1={x0}
-                        y1={baselineY + HEADER_H + TABLE_HEAD_H}
-                        x2={x0 + boxW}
-                        y2={baselineY + HEADER_H + TABLE_HEAD_H}
+                        x1={t.x}
+                        y1={ruleY}
+                        x2={t.x + tableW}
+                        y2={ruleY}
                         stroke="#e2e8f0"
                         strokeWidth={1}
                       />
                       <rect
-                        x={x0}
-                        y={baselineY}
-                        width={boxW}
-                        height={
-                          HEADER_H + TABLE_HEAD_H + tableRows * ROW_H + 6
-                        }
+                        x={t.x}
+                        y={t.y}
+                        width={tableW}
+                        height={STRIP_H + TABLE_HEAD_H + tableRows * ROW_H + 6}
                         fill="none"
                         stroke="#e2e8f0"
                         strokeWidth={1}
@@ -417,7 +471,7 @@ function ClassInspector({
             style={{ backgroundColor: color }}
           />
           Class {cls.id} — {cls.label.replace(/_+(?= \/|$)/g, "")}
-          <span className="font-normal text-slate-400">
+          <span className="font-normal text-slate-500">
             ({formatNumber(cls.size)} segments, {cls.pct.toFixed(1)}%)
           </span>
         </CardTitle>
@@ -431,10 +485,17 @@ function ClassInspector({
           </TabsList>
 
           <TabsContent value="words" className="space-y-3">
-            <div className="flex justify-end">
+            <div className="flex items-start justify-between gap-3">
+              <p className="text-xs text-slate-500">
+                Words most typical of this class, strongest first. The number is
+                χ² (chi-square): how far above chance the word turns up in this
+                class&apos;s segments. Higher means more typical. In the table, p
+                is how likely a link this strong would be by chance alone.
+              </p>
               <div className="inline-flex rounded-md border border-slate-200 p-0.5">
                 <button
                   onClick={() => setMode("chart")}
+                  aria-pressed={mode === "chart"}
                   aria-label="Bar chart view"
                   className={cn(
                     "rounded p-1.5 text-slate-500",
@@ -445,6 +506,7 @@ function ClassInspector({
                 </button>
                 <button
                   onClick={() => setMode("table")}
+                  aria-pressed={mode === "table"}
                   aria-label="Table view"
                   className={cn(
                     "rounded p-1.5 text-slate-500",
@@ -483,16 +545,16 @@ function ClassInspector({
                   <thead className="sticky top-0 bg-slate-50 text-left uppercase tracking-wider text-slate-500">
                     <tr>
                       <th className="border-b border-slate-200 px-3 py-2 font-medium">
-                        Form
+                        Word
                       </th>
                       <th className="border-b border-slate-200 px-3 py-2 text-right font-medium">
-                        chi2
+                        <span className="normal-case">χ²</span>
                       </th>
                       <th className="border-b border-slate-200 px-3 py-2 text-right font-medium">
-                        p
+                        <span className="normal-case">p</span>
                       </th>
                       <th className="border-b border-slate-200 px-3 py-2 text-right font-medium">
-                        freq in / total
+                        Segments in class / corpus
                       </th>
                     </tr>
                   </thead>
@@ -519,19 +581,23 @@ function ClassInspector({
             )}
           </TabsContent>
 
-          <TabsContent value="variables">
+          <TabsContent value="variables" className="space-y-3">
+            <p className="text-xs text-slate-500">
+              Variable values that turn up more in this class than in the rest
+              of the corpus, strongest first (χ², all with p &lt; 0.05).
+            </p>
             {cls.variables.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-400">
+              <p className="py-6 text-center text-sm text-slate-500">
                 No over-represented variable modalities in this class.
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
                 {cls.variables.map((v, i) => (
                   <Badge key={i} variant="outline" className="py-1">
-                    <span className="text-slate-400">{v.variable}:</span>
+                    <span className="text-slate-500">{v.variable}:</span>
                     <span className="font-semibold">{v.modality}</span>
-                    <span className="tabular-nums text-slate-400">
-                      chi2 {v.chi2.toFixed(1)}
+                    <span className="tabular-nums text-slate-500">
+                      χ² {v.chi2.toFixed(1)}
                     </span>
                   </Badge>
                 ))}
@@ -539,9 +605,13 @@ function ClassInspector({
             )}
           </TabsContent>
 
-          <TabsContent value="segments">
+          <TabsContent value="segments" className="space-y-3">
+            <p className="text-xs text-slate-500">
+              The segments most typical of this class. Each score adds up the
+              χ² of this class&apos;s words that the segment contains.
+            </p>
             {cls.segments.length === 0 ? (
-              <p className="py-6 text-center text-sm text-slate-400">
+              <p className="py-6 text-center text-sm text-slate-500">
                 No characteristic segments.
               </p>
             ) : (
@@ -555,7 +625,7 @@ function ClassInspector({
                       <Badge variant="secondary" className="tabular-nums">
                         score {seg.score.toFixed(1)}
                       </Badge>
-                      <span className="text-xs text-slate-400">
+                      <span className="text-xs text-slate-500">
                         document #{seg.doc_index + 1}
                       </span>
                     </div>

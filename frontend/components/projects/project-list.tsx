@@ -101,7 +101,7 @@ export function ProjectList() {
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-xl font-semibold tracking-tight">Projects</h2>
+        <h2 className="font-display text-xl font-semibold tracking-tight">Projects</h2>
         <Button onClick={() => setCreateOpen(true)}>
           <Plus /> New project
         </Button>
@@ -161,7 +161,7 @@ export function ProjectList() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <p className="flex items-center gap-1.5 text-xs text-slate-400">
+                  <p className="flex items-center gap-1.5 text-xs text-slate-500">
                     <CalendarDays className="h-3.5 w-3.5" />
                     Created {formatDate(project.created_at)}
                   </p>

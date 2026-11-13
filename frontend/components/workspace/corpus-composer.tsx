@@ -48,6 +48,34 @@ import { ConfirmDialog } from "./confirm-dialog";
 type VarDef = { name: string; values: string[]; auto: boolean };
 type Doc = { text: string; variables: Record<string, string> };
 
+// A removal that would lose typed text or picked values asks first.
+type Removal =
+  | { kind: "doc"; index: number }
+  | { kind: "variable"; name: string; used: number }
+  | { kind: "value"; varName: string; value: string; used: number };
+
+function describeRemoval(r: Removal) {
+  const docs = (n: number) => `${n} document${n === 1 ? "" : "s"}`;
+  if (r.kind === "doc")
+    return {
+      title: `Delete document ${r.index + 1}?`,
+      description:
+        "Its text and variable values will be removed from the corpus. This cannot be undone.",
+      confirmLabel: "Delete",
+    };
+  if (r.kind === "variable")
+    return {
+      title: `Delete variable ${r.name}?`,
+      description: `Its values will be removed from ${docs(r.used)}. This cannot be undone.`,
+      confirmLabel: "Delete",
+    };
+  return {
+    title: `Remove value ${r.value}?`,
+    description: `${docs(r.used)} will be left with no ${r.varName} value. This cannot be undone.`,
+    confirmLabel: "Remove",
+  };
+}
+
 const NONE = "__none__";
 const ADD_NEW = "__add_new__";
 // Documents shown at once. Loading a large corpus used to put every
@@ -110,6 +138,7 @@ export function CorpusComposer({
     text: string;
   } | null>(null);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
+  const [pendingRemoval, setPendingRemoval] = React.useState<Removal | null>(null);
   // Unsaved work: every edit replaces `docs`/`schema` with a new array, so
   // comparing with the arrays present right after loading is enough.
   const baseline = React.useRef<{ schema: VarDef[]; docs: Doc[] } | null>(null);
@@ -203,6 +232,27 @@ export function CorpusComposer({
         return { ...d, variables };
       })
     );
+  }
+
+  // Ask first only when something typed or picked would be lost.
+  function askRemoveVariable(name: string) {
+    const used = docs.filter((d) => d.variables[name]).length;
+    if (used === 0) removeVariable(name);
+    else setPendingRemoval({ kind: "variable", name, used });
+  }
+
+  function askRemoveValue(varName: string, value: string) {
+    const used = docs.filter((d) => d.variables[varName] === value).length;
+    if (used === 0) removeValue(varName, value);
+    else setPendingRemoval({ kind: "value", varName, value, used });
+  }
+
+  function confirmRemoval() {
+    const r = pendingRemoval;
+    setPendingRemoval(null);
+    if (r?.kind === "doc") removeDoc(r.index);
+    else if (r?.kind === "variable") removeVariable(r.name);
+    else if (r) removeValue(r.varName, r.value);
   }
 
   // ---- document operations ----
@@ -324,6 +374,7 @@ export function CorpusComposer({
     editing !== null &&
     draftText.trim() !==
       (editing === "new" ? "" : docs[editing]?.text ?? "").trim();
+  const removal = pendingRemoval ? describeRemoval(pendingRemoval) : null;
 
   if (loading) {
     return (
@@ -340,10 +391,10 @@ export function CorpusComposer({
       {/* Header */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="mr-auto">
-          <h2 className="text-xl font-semibold tracking-tight">
+          <h2 className="font-display text-xl font-semibold tracking-tight">
             Corpus composer
           </h2>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-600">
             Define your variables once, then add one document per interview —
             no &quot;****&quot; markers to hand-write.
           </p>
@@ -375,7 +426,7 @@ export function CorpusComposer({
         </CardHeader>
         <CardContent className="space-y-3">
           {schema.length === 0 && (
-            <p className="text-sm text-slate-400">
+            <p className="text-sm text-slate-500">
               Add a variable such as <span className="font-mono">RESP</span>,{" "}
               <span className="font-mono">GEN</span> or{" "}
               <span className="font-mono">FACUL</span>. Each document then
@@ -394,7 +445,7 @@ export function CorpusComposer({
                   {Math.max(docs.length, 1)}
                 </span>
               ) : v.values.length === 0 ? (
-                <span className="text-xs text-slate-400">
+                <span className="text-xs text-slate-500">
                   no values yet — add them from a document&apos;s dropdown
                 </span>
               ) : (
@@ -405,7 +456,7 @@ export function CorpusComposer({
                   >
                     {value}
                     <button
-                      onClick={() => removeValue(v.name, value)}
+                      onClick={() => askRemoveValue(v.name, value)}
                       aria-label={`Remove value ${value}`}
                       className="text-slate-400 hover:text-slate-700"
                     >
@@ -424,7 +475,7 @@ export function CorpusComposer({
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => removeVariable(v.name)}
+                onClick={() => askRemoveVariable(v.name)}
                 aria-label={`Delete variable ${v.name}`}
               >
                 <Trash2 className="h-4 w-4 text-slate-400" />
@@ -454,7 +505,7 @@ export function CorpusComposer({
 
       {/* Documents */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700">
+        <h3 className="font-display text-sm font-semibold text-slate-700">
           Documents ({docs.length})
         </h3>
         <Button variant="outline" size="sm" onClick={() => openEditor("new")}>
@@ -484,7 +535,7 @@ export function CorpusComposer({
               <CardContent className="space-y-2 p-3">
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">Document {i + 1}</Badge>
-                  <span className="text-xs text-slate-400">
+                  <span className="text-xs text-slate-500">
                     {formatNumber(pageWordCounts[offset])} words
                   </span>
                   <div className="ml-auto flex gap-1">
@@ -499,7 +550,7 @@ export function CorpusComposer({
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => removeDoc(i)}
+                      onClick={() => setPendingRemoval({ kind: "doc", index: i })}
                       aria-label={`Delete document ${i + 1}`}
                     >
                       <Trash2 className="h-4 w-4 text-slate-400" />
@@ -513,7 +564,7 @@ export function CorpusComposer({
                   <div className="grid gap-2 pt-1 sm:grid-cols-2 lg:grid-cols-3">
                     {schema.map((v) => (
                       <div key={v.name} className="grid gap-1">
-                        <Label className="font-mono text-[11px] uppercase text-slate-400">
+                        <Label className="font-mono text-[11px] uppercase text-slate-500">
                           {v.name}
                         </Label>
                         {v.auto ? (
@@ -558,12 +609,15 @@ export function CorpusComposer({
                               }
                             }}
                           >
-                            <SelectTrigger className="h-8">
+                            <SelectTrigger
+                              className="h-8"
+                              aria-label={`${v.name}, document ${i + 1}`}
+                            >
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value={NONE}>
-                                <span className="text-slate-400">(none)</span>
+                                <span className="text-slate-600">(none)</span>
                               </SelectItem>
                               {v.values.map((value) => (
                                 <SelectItem key={value} value={value}>
@@ -626,7 +680,7 @@ export function CorpusComposer({
             placeholder="Paste the interview / transcription text here…"
             className="font-mono text-sm"
           />
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             {formatNumber(tokenCount(draftText))} words
           </p>
           <DialogFooter>
@@ -662,6 +716,15 @@ export function CorpusComposer({
           onCancel?.();
         }}
         onCancel={() => setConfirmCancel(false)}
+      />
+
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        title={removal?.title ?? ""}
+        description={removal?.description ?? ""}
+        confirmLabel={removal?.confirmLabel ?? "Delete"}
+        onConfirm={confirmRemoval}
+        onCancel={() => setPendingRemoval(null)}
       />
     </div>
   );

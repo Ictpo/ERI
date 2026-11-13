@@ -156,6 +156,6 @@ export type AfcResult = {
   cols: AfcPoint[];
 };
 
-export type Settings = { plain_mode: boolean };
+export type Settings = { plain_mode: boolean; export_format: "svg" | "png" };
 
 export type Health = { ok: true; version: string };

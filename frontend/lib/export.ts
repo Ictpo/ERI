@@ -10,6 +10,11 @@
 
 import { toast } from "@/components/ui/use-toast";
 
+/** Chart text font, on screen and in exports. Arial ships with Windows and
+    macOS; the app's Inter exists only under next/font's hashed name. */
+export const CHART_FONT = "Arial, Helvetica, 'Liberation Sans', sans-serif";
+
+// font-family is not inlined: its computed value is next/font's hashed name.
 const STYLE_PROPS = [
   "fill",
   "fill-opacity",
@@ -18,7 +23,6 @@ const STYLE_PROPS = [
   "stroke-opacity",
   "stroke-dasharray",
   "opacity",
-  "font-family",
   "font-size",
   "font-weight",
   "text-anchor",
@@ -63,6 +67,9 @@ export function buildExportClone(svgEl: SVGSVGElement): ExportClone {
 
   clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
   clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  if (!clone.getAttribute("font-family")) {
+    clone.setAttribute("font-family", CHART_FONT);
+  }
 
   // Export at the logical (viewBox) size, not the CSS-scaled on-screen size.
   let width = svgEl.clientWidth || 800;

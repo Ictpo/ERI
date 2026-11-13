@@ -6,7 +6,8 @@ import { usePlainMode } from "@/lib/appearance";
 /**
  * Brand loader (BRANDING.md Step 5) — purely decorative, shown while an
  * analysis runs. Honours plain mode: researchers who don't want the
- * animation get a plain indicator instead.
+ * animation get a plain indicator instead. Under the OS reduce-motion
+ * setting it holds still (`.eri-motion` in globals.css).
  */
 
 type Column = { left: number; dur: number; delay: number; color: string; bits: string[] };
@@ -67,7 +68,7 @@ export function EriLoader({
         <div
           key={i}
           aria-hidden
-          className="pointer-events-none absolute top-0 font-mono text-sm font-semibold leading-[1.6]"
+          className="eri-motion pointer-events-none absolute top-0 font-mono text-sm font-semibold leading-[1.6]"
           style={{
             left: `${col.left}%`,
             color: col.color,
@@ -94,7 +95,7 @@ export function EriLoader({
       ))}
       <div className="relative flex h-[120px] w-[120px] items-center justify-center">
         <div
-          className="absolute -inset-3 rounded-full opacity-70 blur-[7px]"
+          className="eri-motion absolute -inset-3 rounded-full opacity-70 blur-[7px]"
           style={{
             background:
               "conic-gradient(from 0deg,#F4A63F,#D6266F,#F0704A,#F4A63F)",

@@ -21,12 +21,12 @@ Brand vocabulary actually used by these components:
 
 | Concern | Classes / values |
 |---|---|
-| Primary accent | `indigo-600` (hover `indigo-700`) — buttons, active tabs, switch-on, slider fill |
-| Neutrals | `slate-50/100/200/300/500/600/700/900` for surfaces, borders, text |
+| Primary accent | `indigo-600` (hover `indigo-700`) — buttons, active tabs, switch-on, slider fill. **`indigo-*` renders Eri ROSE** (`#D6266F`, hover `#A81A57`): the app overrides the scale |
+| Neutrals | `slate-50/100/200/300/500/600/700/900` for surfaces, borders, text. **`slate-*` renders WARM neutrals** (Paper `#FBF6F2`, Surface `#F5ECE6`, Border `#ECDFD6`, Ink `#211619`), not cold stock slate |
 | Status | `emerald`/`green` (success), `amber` (warning), `red` (destructive), `indigo` (info) |
 | Surface | white cards, `border border-slate-200`, `rounded-md`/`rounded-lg`, `shadow-sm` |
 | Text | `text-sm` body, `text-slate-500` muted, `font-semibold` titles |
-| Type family | Inter (shipped in `fonts/`, applied to `body`) |
+| Type family | Inter for body, tables and controls (shipped in `fonts/`, applied to `body`); **Newsreader** serif via `font-display` for the wordmark and headings only |
 
 ## Component API — IMPORTANT
 
@@ -47,6 +47,9 @@ some are compounds. Never assume sub-component names — check this list:
   `TooltipTrigger`, `TooltipContent`), `Toast` (+ `ToastProvider`,
   `ToastViewport`, `ToastTitle`, `ToastDescription`, `ToastClose`,
   `ToastAction`).
+- **Brand pieces:** `EriLoader` (animated brand loader; prop `label?`; its fox
+  image loads from `/eri-mark.png`, which the bundle does not ship) and
+  `PlainModeToggle` (needs a `TooltipProvider` ancestor).
 
 Read each component's `<Name>.d.ts` for its exact props.
 
