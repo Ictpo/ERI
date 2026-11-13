@@ -15,6 +15,13 @@ import { ExportDialog } from "./export-dialog";
 import { LabelHandles, type LabelHandle } from "./label-handles";
 import { declutterLabels } from "@/lib/declutter";
 import { CHART_FONT } from "@/lib/export";
+import {
+  defaultTopN,
+  selectWords,
+  topNRange,
+  type AfcSelectMode,
+} from "@/lib/afc-select";
+import { buildAfcHtml } from "@/lib/afc-html";
 
 const WIDTH = 720;
 const HEIGHT = 520;
@@ -75,7 +82,7 @@ type Placed = {
   displaced?: boolean;
   /** Label left out of the export: no room near its point (marker stays). */
   hidden?: boolean;
-  /** Still overlapping (only with "Label every word"). */
+  /** Label still overlaps another label or a point. */
   overlapping?: boolean;
   /** Leader-line end: the label's nearest point to its marker. */
   ax?: number;
@@ -173,8 +180,11 @@ function PointNodes({
 export function AfcView({
   result,
   variable = "",
+  about,
 }: {
   result: AfcResult;
+  /** Plain-language analysis settings, for the interactive HTML export. */
+  about?: string;
   /** The crossed variable's name (e.g. "TIPO"), from the run's params. */
   variable?: string;
 }) {
@@ -193,8 +203,9 @@ export function AfcView({
   const [exportOpen, setExportOpen] = React.useState(false);
   const [minGap, setMinGap] = React.useState(2);
   const [includeAxes, setIncludeAxes] = React.useState(true); // axes, % and key on by default
-  // On: every word labelled, leftovers overlap (to fix in an editor).
-  const [labelAll, setLabelAll] = React.useState(false);
+  // Which words the printed figure shows (see lib/afc-select.ts).
+  const [selMode, setSelMode] = React.useState<AfcSelectMode>("above-average");
+  const [topN, setTopN] = React.useState(() => defaultTopN(result.rows.length));
   // Furthest a word label may sit from its point in the export (px).
   const [maxShift, setMaxShift] = React.useState(40);
   // Labels the user placed by hand in the Download preview, in export units,
@@ -223,6 +234,23 @@ export function AfcView({
 
   const [ax, ay] = axes;
   const plane = `${ax}${ay}|`;
+  const selection = React.useMemo(
+    () =>
+      selectWords({
+        rows: result.rows,
+        ax,
+        ay,
+        inertiaX: result.explained[ax] ?? 0,
+        inertiaY: result.explained[ay] ?? 0,
+        mode: selMode,
+        topN,
+      }),
+    [result, ax, ay, selMode, topN]
+  );
+  const selectedWords = React.useMemo(
+    () => new Set(Array.from(selection.ids, (i) => result.rows[i])),
+    [selection, result.rows]
+  );
   // Label widths measured in the chart font, not guessed from characters.
   const measure = React.useMemo(() => {
     const ctx = typeof document !== "undefined" ? document.createElement("canvas").getContext("2d") : null;
@@ -397,7 +425,11 @@ export function AfcView({
   const exportPlaced: Placed[] = React.useMemo(() => {
     // Only the Download preview needs this; skip the declutter until it opens.
     if (!exportOpen) return [];
-    const base = visiblePoints.map(({ point, kind, vx, vy }) => ({
+    // Words outside the selection are not drawn at all (marker or label);
+    // modalities are always drawn.
+    const base = visiblePoints
+      .filter(({ point, kind }) => kind === "modality" || selectedWords.has(point))
+      .map(({ point, kind, vx, vy }) => ({
       point,
       kind,
       px: xScale(vx),
@@ -419,10 +451,10 @@ export function AfcView({
       eH,
       {
         measure,
-        keepAll: labelAll,
+        keepAll: true,
         maxShift,
         // Keep labels off the axis titles and key (bottom band) and the y title (left band).
-        obstacles: includeAxes ? [{ x: 0, y: eH - 28, w: eW, h: 28 }, { x: 0, y: 0, w: 22, h: eH }] : [],
+        obstacles: includeAxes ? [{ x: 0, y: eH - 44, w: eW, h: 44 }, { x: 0, y: 0, w: 22, h: eH }] : [],
       }
     );
     return base.map((p, i) => {
@@ -459,10 +491,10 @@ export function AfcView({
         ay: Math.min(Math.max(p.py, top), top + fs * 1.2),
       };
     });
-  }, [exportOpen, visiblePoints, xScale, yScale, minGap, eW, eH, ax, ay, measure, labelAll, maxShift, includeAxes, handPlaced, plane, labelWidth]);
+  }, [exportOpen, visiblePoints, xScale, yScale, minGap, eW, eH, ax, ay, measure, maxShift, includeAxes, handPlaced, plane, labelWidth, selectedWords]);
   // Word labels the export leaves out (or that still overlap), for the preview.
   const exportWords = exportPlaced.filter((p) => p.kind === "word");
-  const unplaced = exportWords.filter((p) => (labelAll ? p.overlapping : p.hidden)).length;
+  const unplaced = exportWords.filter((p) => p.overlapping).length;
 
   // Grab areas for the Download preview, sized like the declutter's boxes.
   const labelHandles: LabelHandle[] = exportPlaced
@@ -859,6 +891,9 @@ export function AfcView({
               </text>
               {/* Key: the symbols, and the variable crossed. */}
               <circle cx={MARGIN.left + 3} cy={eH - 16} r={3} fill={WORD_COLOR} fillOpacity={0.7} />
+              <text x={MARGIN.left} y={eH - 28} fontSize={10} fill={WORD_COLOR} fontFamily={CHART_FONT}>
+                {selection.rule}
+              </text>
               <text x={MARGIN.left + 10} y={eH - 12} fontSize={11} fill={WORD_COLOR} fontFamily={CHART_FONT}>words</text>
               <path d={`M${MARGIN.left + 62},${eH - 21.5} l5.5,5.5 l-5.5,5.5 l-5.5,-5.5 Z`} fill={modalityColor} />
               <text x={MARGIN.left + 72} y={eH - 12} fontSize={11} fontWeight={700} fill={modalityColor} fontFamily={CHART_FONT}>
@@ -875,7 +910,19 @@ export function AfcView({
         onOpenChange={setExportOpen}
         filename={`afc-${variable.replace(/[^\w-]+/g, "_") || "scatter"}-axes-${ax + 1}x${ay + 1}`}
         getSvg={() => exportRef.current}
-        version={`${minGap}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}|${labelAll}|${maxShift}|${JSON.stringify(handPlaced)}`}
+        version={`${minGap}|${includeAxes}|${modalityColor}|${ax}${ay}|${showWords}|${showModalities}|${selMode}|${topN}|${maxShift}|${JSON.stringify(handPlaced)}`}
+        html={() =>
+          buildAfcHtml({
+            result,
+            ax,
+            ay,
+            variable,
+            about,
+            modalityColor,
+            mode: selMode,
+            topN,
+          })
+        }
         overlay={
           moveByHand ? (
             <LabelHandles handles={labelHandles} onMove={moveLabel} />
@@ -929,15 +976,55 @@ export function AfcView({
                 />
               </label>
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-700 sm:col-span-2">
-              <Switch checked={labelAll} onCheckedChange={setLabelAll} />
-              Label every word, even where labels overlap
-            </label>
+            <div className="grid gap-2 sm:col-span-2">
+              <Label>Words shown</Label>
+              <div
+                role="group"
+                aria-label="Words shown"
+                className="inline-flex w-fit flex-wrap rounded-md border border-slate-200 p-0.5"
+              >
+                {(
+                  [
+                    ["above-average", "Above-average contribution (recommended)"],
+                    ["top-n", "Top N by contribution"],
+                    ["all", "All words"],
+                  ] as [AfcSelectMode, string][]
+                ).map(([m, text]) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setSelMode(m)}
+                    aria-pressed={selMode === m}
+                    aria-label={text}
+                    className={cn(
+                      "rounded px-2.5 py-1 text-xs font-medium text-slate-600",
+                      selMode === m && "bg-slate-800 text-white"
+                    )}
+                  >
+                    {text}
+                  </button>
+                ))}
+              </div>
+              {selMode === "top-n" && (
+                <>
+                  <Label>
+                    Number of words: <span className="tabular-nums">{Math.min(topN, result.rows.length)}</span>
+                  </Label>
+                  <Slider
+                    aria-label="Number of words shown"
+                    min={topNRange(result.rows.length).min}
+                    max={topNRange(result.rows.length).max}
+                    step={1}
+                    value={[Math.min(Math.max(topN, topNRange(result.rows.length).min), topNRange(result.rows.length).max)]}
+                    onValueChange={([v]) => setTopN(v)}
+                  />
+                </>
+              )}
+              <p className="text-xs text-slate-600">{selection.rule}</p>
+            </div>
             {unplaced > 0 && (
               <p className="text-xs text-slate-600 sm:col-span-2" role="status">
-                {labelAll
-                  ? `${unplaced} of ${exportWords.length} word labels still overlap a label or a point. Fix them in an editor, or switch this off to leave them out.`
-                  : `${unplaced} of ${exportWords.length} word labels are left out: there was no room near their points. Their points are still drawn; the words left out contribute least to these two axes.`}
+                {`${unplaced} of ${exportWords.length} word labels still overlap a label or a point. Lower the number of words (Top N), switch to above-average contribution, or raise the furthest-a-label-may-sit slider; or fix them in an editor.`}
               </p>
             )}
             <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">

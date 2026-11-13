@@ -48,6 +48,7 @@ export function ExportDialog({
   title = "Download preview",
   controls,
   overlay,
+  html,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -62,8 +63,14 @@ export function ExportDialog({
   overlay?: React.ReactNode;
   /** View-specific controls (spread slider, colors, axes toggle…). */
   controls?: React.ReactNode;
+  /** Builds a self-contained interactive HTML document. When given, the
+      format toggle offers "HTML (interactive)". */
+  html?: () => string;
 }) {
-  const [format, setFormat] = React.useState<"svg" | "png">("svg");
+  const [format, setFormat] = React.useState<"svg" | "png" | "html">("svg");
+  // A view without `html` can never be in html mode.
+  const effective: "svg" | "png" | "html" =
+    format === "html" && !html ? "svg" : format;
   const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const cloneRef = React.useRef<ExportClone | null>(null);
@@ -126,9 +133,11 @@ export function ExportDialog({
     };
   }, [open]);
 
-  function pickFormat(f: "svg" | "png") {
+  function pickFormat(f: "svg" | "png" | "html") {
     picked.current = true;
     setFormat(f);
+    // Only svg/png are ever remembered (settings.export_format).
+    if (f === "html") return;
     lastFormat = Promise.resolve(f);
     api.saveSettings({ export_format: f }).catch(() => {
       /* non-fatal: the choice still applies until ERI restarts */
@@ -140,7 +149,12 @@ export function ExportDialog({
     if (!clone) return;
     setBusy(true);
     try {
-      if (format === "svg") {
+      if (effective === "html" && html) {
+        downloadBlob(
+          new Blob([html()], { type: "text/html;charset=utf-8" }),
+          `${filename}.html`
+        );
+      } else if (effective === "svg") {
         downloadBlob(svgBlob(clone.markup), `${filename}.svg`);
       } else {
         const png = await svgToPngBlob(clone.markup, clone.width, clone.height, 2);
@@ -223,6 +237,14 @@ export function ExportDialog({
           )}
         </div>
 
+        {effective === "html" && (
+          <p className="text-xs text-slate-600">
+            This file is interactive: open it in any browser to zoom, pan and
+            hover over dots. It works offline. The preview above shows the
+            printed figure.
+          </p>
+        )}
+
         {controls && (
           <div className="grid gap-3 rounded-md border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-2">
             {controls}
@@ -235,17 +257,17 @@ export function ExportDialog({
             aria-label="File format"
             className="inline-flex rounded-md border border-slate-200 p-0.5"
           >
-            {(["svg", "png"] as const).map((f) => (
+            {((html ? ["svg", "png", "html"] : ["svg", "png"]) as ("svg" | "png" | "html")[]).map((f) => (
               <button
                 key={f}
                 onClick={() => pickFormat(f)}
-                aria-pressed={format === f}
+                aria-pressed={effective === f}
                 className={cn(
                   "rounded px-3 py-1 text-xs font-medium uppercase text-slate-500",
-                  format === f && "bg-slate-800 text-white"
+                  effective === f && "bg-slate-800 text-white"
                 )}
               >
-                {f === "svg" ? "SVG (vector)" : "PNG (image)"}
+                {f === "svg" ? "SVG (vector)" : f === "png" ? "PNG (image)" : "HTML (interactive)"}
               </button>
             ))}
           </div>
@@ -254,7 +276,7 @@ export function ExportDialog({
               Cancel
             </Button>
             <Button onClick={download} disabled={busy || !previewUrl}>
-              <Download /> {busy ? "Preparing…" : `Download ${format.toUpperCase()}`}
+              <Download /> {busy ? "Preparing…" : `Download ${effective.toUpperCase()}`}
             </Button>
           </div>
         </DialogFooter>

@@ -184,6 +184,7 @@ export function ResultsPane({
         <AfcView
           key={analysis.id}
           result={analysis.result as AfcResult}
+          about={describeParams(analysis)}
           variable={String((analysis.params as { variable?: unknown }).variable ?? "")}
         />
       )}
